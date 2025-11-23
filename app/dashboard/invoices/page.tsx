@@ -1,94 +1,82 @@
 "use client"
 
-import { useState } from "react"
+import dynamic from 'next/dynamic'
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ProofModal } from "@/components/invoices/proof-modal"
 import { Search, Filter, CheckCircle2, AlertTriangle, Clock } from "lucide-react"
+import { fetchRecords } from "@/lib/teable"
+import { INVOICES_TABLE_ID } from "@/lib/teable-constants"
 
-const invoices = [
-  {
-    id: "INV-2023-001",
-    vendor: "MediSupply Corp",
-    date: "2023-11-20",
-    amount: "$1,250.00",
-    status: "Validated",
-    lineItem: "Surgical Gloves (Box of 100)",
-    quantity: "50",
-    unitPrice: "$25.00",
-    totalAmount: "$1,250.00",
-    contractTerm: "Surgical Gloves - Standard Grade",
-    contractRate: "$25.00",
-    variance: "$0.00",
-  },
-  {
-    id: "INV-2023-002",
-    vendor: "Global Health Services",
-    date: "2023-11-19",
-    amount: "$4,500.00",
-    status: "Flagged",
-    lineItem: "IT Support - Monthly Retainer",
-    quantity: "1",
-    unitPrice: "$4,500.00",
-    totalAmount: "$4,500.00",
-    contractTerm: "Monthly IT Support Services",
-    contractRate: "$4,000.00",
-    variance: "+$500.00",
-  },
-  {
-    id: "INV-2023-003",
-    vendor: "TechMed Solutions",
-    date: "2023-11-18",
-    amount: "$850.00",
-    status: "Pending",
-    lineItem: "Equipment Repair - X-Ray Unit",
-    quantity: "1",
-    unitPrice: "$850.00",
-    totalAmount: "$850.00",
-    contractTerm: "Emergency Equipment Repair",
-    contractRate: "TBD",
-    variance: "Pending",
-  },
-  {
-    id: "INV-2023-004",
-    vendor: "CareFirst Systems",
-    date: "2023-11-17",
-    amount: "$12,400.00",
-    status: "Validated",
-    lineItem: "Pharmaceutical Supply - Batch A",
-    quantity: "1",
-    unitPrice: "$12,400.00",
-    totalAmount: "$12,400.00",
-    contractTerm: "Bulk Pharmaceutical Supply",
-    contractRate: "$12,400.00",
-    variance: "$0.00",
-  },
-  {
-    id: "INV-2023-005",
-    vendor: "Unity Medical",
-    date: "2023-11-16",
-    amount: "$2,100.00",
-    status: "Flagged",
-    lineItem: "Lab Testing Services - Panel C",
-    quantity: "100",
-    unitPrice: "$21.00",
-    totalAmount: "$2,100.00",
-    contractTerm: "Standard Lab Panel C",
-    contractRate: "$18.50",
-    variance: "+$250.00",
-  },
-]
+// Dynamically import components that use browser-specific APIs or cause SSR issues
+const UploadInvoiceDialog = dynamic(
+  () => import('@/components/invoices/upload-invoice-dialog').then(mod => mod.UploadInvoiceDialog),
+  { ssr: false }
+)
+const ProofModal = dynamic(
+  () => import('@/components/invoices/proof-modal').then(mod => mod.ProofModal),
+  { ssr: false }
+)
+
+// Define a type for the invoice records
+type Invoice = {
+  id: string;
+  fields: {
+    'Invoice ID': string;
+    'Vendor Name': string;
+    'Invoice Date': string;
+    'Status': 'Validated' | 'Flagged' | 'Pending';
+    'Total Amount': number;
+    [key: string]: any;
+  };
+};
 
 export default function InvoicesPage() {
-  const [selectedInvoice, setSelectedInvoice] = useState<(typeof invoices)[0] | null>(null)
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
   const [proofOpen, setProofOpen] = useState(false)
 
-  const handleViewProof = (invoice: (typeof invoices)[0]) => {
+
+  const fetchInvoices = async () => {
+    setLoading(true);
+    try {
+      const records = await fetchRecords(INVOICES_TABLE_ID);
+      // Ensure the records are properly typed
+      const typedRecords = records.map(record => ({
+        id: record.id,
+        fields: {
+          'Invoice ID': record.fields['Invoice ID'] as string,
+          'Vendor Name': record.fields['Vendor Name'] as string,
+          'Invoice Date': record.fields['Invoice Date'] as string,
+          'Status': (record.fields['Status'] as 'Validated' | 'Flagged' | 'Pending') || 'Pending',
+          'Total Amount': record.fields['Total Amount'] as number,
+        }
+      }));
+      setInvoices(typedRecords as Invoice[]);
+    } catch (error) {
+      console.error("Failed to fetch invoices:", error);
+      // Handle error state in UI if needed
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchInvoices();
+  }, []);
+
+  const handleViewProof = (invoice: Invoice) => {
     setSelectedInvoice(invoice)
     setProofOpen(true)
+  }
+
+  const handleInvoiceUploaded = () => {
+    // Refetch the invoices to show the newly uploaded one
+    fetchInvoices();
   }
 
   return (
@@ -98,9 +86,10 @@ export default function InvoicesPage() {
           <h2 className="text-3xl font-bold tracking-tight">Invoice Validation</h2>
           <p className="text-muted-foreground">Review and approve invoices validated against your contracts.</p>
         </div>
+        <UploadInvoiceDialog onInvoiceUploaded={handleInvoiceUploaded} />
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards - These can be updated later to reflect real data */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -166,33 +155,46 @@ export default function InvoicesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {invoices.map((invoice) => (
-                <TableRow key={invoice.id}>
-                  <TableCell className="font-medium">{invoice.id}</TableCell>
-                  <TableCell>{invoice.vendor}</TableCell>
-                  <TableCell>{invoice.date}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        invoice.status === "Validated"
-                          ? "default"
-                          : invoice.status === "Flagged"
-                            ? "destructive"
-                            : "secondary"
-                      }
-                      className={invoice.status === "Validated" ? "bg-green-600 hover:bg-green-700" : ""}
-                    >
-                      {invoice.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">{invoice.amount}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => handleViewProof(invoice)}>
-                      View Proof
-                    </Button>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center">
+                    Loading...
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                invoices.map((invoice) => (
+                  <TableRow key={invoice.id}>
+                    <TableCell className="font-medium">{invoice.fields['Invoice ID']}</TableCell>
+                    <TableCell>{invoice.fields['Vendor Name']}</TableCell>
+                    <TableCell>{new Date(invoice.fields['Invoice Date']).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          invoice.fields['Status'] === "Validated"
+                            ? "default"
+                            : invoice.fields['Status'] === "Flagged"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                        className={invoice.fields['Status'] === "Validated" ? "bg-green-600 hover:bg-green-700" : ""}
+                      >
+                        {invoice.fields['Status']}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {new Intl.NumberFormat("en-US", {
+                        style: "currency",
+                        currency: "USD",
+                      }).format(invoice.fields['Total Amount'])}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" onClick={() => handleViewProof(invoice)}>
+                        View Proof
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

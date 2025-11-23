@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -22,83 +22,95 @@ import {
   Cell,
 } from "recharts"
 import { TrendingUp, TrendingDown, AlertTriangle, Download } from "lucide-react"
+import { fetchRecords } from "@/lib/teable"
+import { VALIDATION_METRICS_TABLE_ID, VALIDATION_EXCEPTIONS_TABLE_ID } from "@/lib/teable-constants"
 
-// Mock benchmarking data
-const benchmarkingData = [
-  {
-    category: "Facilities > Cleaning/sqft",
-    yourRate: "$0.95",
-    marketMedian: "$0.82",
-    bestInClass: "$0.71",
-    percentile: "78th",
-    status: "warning",
-    annualSpend: "$342,000",
-    savingsOpportunity: "$44,460",
-  },
-  {
-    category: "Temp Staff > IT Support/hr",
-    yourRate: "$52",
-    marketMedian: "$45",
-    bestInClass: "$38",
-    percentile: "85th",
-    status: "critical",
-    annualSpend: "$624,000",
-    savingsOpportunity: "$84,000",
-  },
-  {
-    category: "Equipment > HVAC Maint/unit",
-    yourRate: "$450",
-    marketMedian: "$385",
-    bestInClass: "$320",
-    percentile: "72nd",
-    status: "warning",
-    annualSpend: "$180,000",
-    savingsOpportunity: "$26,000",
-  },
-  {
-    category: "Professional > Consulting/hr",
-    yourRate: "$185",
-    marketMedian: "$165",
-    bestInClass: "$142",
-    percentile: "76th",
-    status: "warning",
-    annualSpend: "$296,000",
-    savingsOpportunity: "$32,000",
-  },
-  {
-    category: "Security > Guard Services/hr",
-    yourRate: "$28",
-    marketMedian: "$32",
-    bestInClass: "$26",
-    percentile: "35th",
-    status: "good",
-    annualSpend: "$245,760",
-    savingsOpportunity: "$0",
-  },
-]
+// Define types for the fetched data
+type ValidationMetric = {
+  id: string;
+  fields: {
+    'validation_id': string;
+    'overall_status': 'Approved' | 'Under Review';
+    'confidence_score': number;
+    'variance_amount': number;
+    'potential_savings': number;
+    'validation_date': string;
+    [key: string]: any;
+  };
+};
 
-const savingsTrendData = [
-  { month: "Jan", identified: 145000, realized: 98000 },
-  { month: "Feb", identified: 178000, realized: 134000 },
-  { month: "Mar", identified: 234000, realized: 189000 },
-  { month: "Apr", identified: 298000, realized: 245000 },
-  { month: "May", identified: 356000, realized: 312000 },
-  { month: "Jun", identified: 425000, realized: 387000 },
-]
-
-const categoryDistribution = [
-  { name: "Facilities", value: 342000, color: "#5B7FFF" },
-  { name: "Temp Staff", value: 624000, color: "#A78BFA" },
-  { name: "Equipment", value: 180000, color: "#10B981" },
-  { name: "Professional", value: 296000, color: "#F59E0B" },
-  { name: "Security", value: 245760, color: "#EF4444" },
-]
+type ValidationException = {
+  id: string;
+  fields: {
+    'exception_id': string;
+    'exception_type': string;
+    'severity': 'High' | 'Medium' | 'Low';
+    'variance_amount': number;
+    'validation_id': string;
+    [key: string]: any;
+  };
+};
 
 export default function AnalyticsPage() {
-  const [selectedPeriod, setSelectedPeriod] = useState("6m")
+  const [metrics, setMetrics] = useState<ValidationMetric[]>([]);
+  const [exceptions, setExceptions] = useState<ValidationException[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const totalSavingsOpportunity = benchmarkingData.reduce(
-    (sum, item) => sum + Number.parseFloat(item.savingsOpportunity.replace(/[$,]/g, "")),
+  useEffect(() => {
+    const fetchAnalyticsData = async () => {
+      setLoading(true);
+      try {
+        const [metricsData, exceptionsData] = await Promise.all([
+          fetchRecords(VALIDATION_METRICS_TABLE_ID),
+          fetchRecords(VALIDATION_EXCEPTIONS_TABLE_ID),
+        ]);
+        setMetrics(metricsData as any);
+        setExceptions(exceptionsData as any);
+      } catch (error) {
+        console.error("Failed to fetch analytics data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAnalyticsData();
+  }, []);
+
+  // Placeholder data for charts and tables until real data is processed
+  const benchmarkingData = exceptions.map(ex => ({
+    category: ex.fields.exception_type,
+    yourRate: `${(ex.fields.variance_amount || 0).toFixed(2)}`,
+    marketMedian: "$0.00",
+    bestInClass: "$0.00",
+    percentile: "N/A",
+    status: ex.fields.severity === "High" ? "critical" : "warning",
+    annualSpend: `${(ex.fields.variance_amount || 0).toFixed(2)}`,
+    savingsOpportunity: `${(ex.fields.variance_amount || 0).toFixed(2)}`,
+  }));
+
+  const savingsTrendData = metrics.map(m => ({
+    month: new Date(m.fields.validation_date).toLocaleString('default', { month: 'short' }),
+    identified: m.fields.potential_savings,
+    realized: m.fields.variance_amount,
+  }));
+
+  const categoryDistribution = exceptions.reduce((acc, ex) => {
+    const category = ex.fields.exception_type || 'Other';
+    const existing = acc.find(item => item.name === category);
+    if (existing) {
+      existing.value += ex.fields.variance_amount || 0;
+    } else {
+      acc.push({ name: category, value: ex.fields.variance_amount || 0, color: `#${Math.floor(Math.random()*16777215).toString(16)}` });
+    }
+    return acc;
+  }, [] as { name: string; value: number; color: string }[]);
+
+  const realizedSavingsYTD = metrics.reduce(
+    (sum, item) => sum + (item.fields.variance_amount || 0),
+    0,
+  );
+
+  const totalSavingsOpportunity = metrics.reduce(
+    (sum, item) => sum + (item.fields.potential_savings || 0),
     0,
   )
 
@@ -123,8 +135,14 @@ export default function AnalyticsPage() {
             <TrendingUp className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${(totalSavingsOpportunity / 1000).toFixed(1)}K</div>
-            <p className="text-xs text-muted-foreground">If optimized to market median</p>
+            {loading ? (
+              <div className="text-2xl font-bold">Loading...</div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">${(totalSavingsOpportunity / 1000).toFixed(1)}K</div>
+                <p className="text-xs text-muted-foreground">If optimized to market median</p>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -134,30 +152,53 @@ export default function AnalyticsPage() {
             <TrendingUp className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">$387K</div>
-            <p className="text-xs text-muted-foreground">+23% from last quarter</p>
+            {loading ? (
+              <div className="text-2xl font-bold">Loading...</div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">${(realizedSavingsYTD / 1000).toFixed(1)}K</div>
+                <p className="text-xs text-muted-foreground">+23% from last quarter</p>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Categories Analyzed</CardTitle>
+            <CardTitle className="text-sm font-medium">Exceptions Created</CardTitle>
             <AlertTriangle className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">127</div>
-            <p className="text-xs text-muted-foreground">Across all service types</p>
+            {loading ? (
+              <div className="text-2xl font-bold">Loading...</div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{exceptions.length}</div>
+                <p className="text-xs text-muted-foreground">Across all service types</p>
+              </>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg. Market Percentile</CardTitle>
+            <CardTitle className="text-sm font-medium">Avg. Confidence Score</CardTitle>
             <TrendingDown className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">74th</div>
-            <p className="text-xs text-muted-foreground">Target: Below 50th percentile</p>
+            {loading ? (
+              <div className="text-2xl font-bold">Loading...</div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">
+                  {(
+                    metrics.reduce((sum, item) => sum + (item.fields.confidence_score || 0), 0) /
+                    (metrics.length || 1)
+                  ).toFixed(2)}
+                </div>
+                <p className="text-xs text-muted-foreground">Target: Above 0.90</p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -190,45 +231,45 @@ export default function AnalyticsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {benchmarkingData.map((item, index) => (
-                      <TableRow key={index}>
-                        <TableCell className="font-medium">{item.category}</TableCell>
-                        <TableCell className="text-right font-semibold">{item.yourRate}</TableCell>
-                        <TableCell className="text-right">{item.marketMedian}</TableCell>
-                        <TableCell className="text-right text-muted-foreground">{item.bestInClass}</TableCell>
-                        <TableCell className="text-center">
-                          <Badge
-                            variant={
-                              item.status === "critical"
-                                ? "destructive"
-                                : item.status === "warning"
-                                  ? "secondary"
-                                  : "default"
-                            }
-                          >
-                            {item.percentile}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">{item.annualSpend}</TableCell>
-                        <TableCell className="text-right">
-                          {item.savingsOpportunity !== "$0" ? (
-                            <span className="font-semibold text-green-600">{item.savingsOpportunity}</span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
+                    {loading ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center">
+                          Loading...
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      benchmarkingData.map((item, index) => (
+                        <TableRow key={index}>
+                          <TableCell className="font-medium">{item.category}</TableCell>
+                          <TableCell className="text-right font-semibold">{item.yourRate}</TableCell>
+                          <TableCell className="text-right">{item.marketMedian}</TableCell>
+                          <TableCell className="text-right text-muted-foreground">{item.bestInClass}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge
+                              variant={
+                                item.status === "critical"
+                                  ? "destructive"
+                                  : item.status === "warning"
+                                    ? "secondary"
+                                    : "default"
+                              }
+                            >
+                              {item.percentile}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">{item.annualSpend}</TableCell>
+                          <TableCell className="text-right">
+                            {item.savingsOpportunity !== "$0.00" ? (
+                              <span className="font-semibold text-green-600">{item.savingsOpportunity}</span>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
-              </div>
-              <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <p className="text-sm text-blue-900">
-                  <strong>Potential savings if at market median:</strong> ${(totalSavingsOpportunity / 1000).toFixed(1)}
-                  K annualized
-                  <br />
-                  <span className="text-blue-700">Based on 15,000+ actual invoices across peer organizations</span>
-                </p>
               </div>
             </CardContent>
           </Card>
@@ -242,48 +283,25 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={350}>
-                <LineChart data={savingsTrendData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => `$${(value / 1000).toFixed(0)}K`} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="identified"
-                    stroke="#5B7FFF"
-                    strokeWidth={2}
-                    name="Identified Savings"
-                  />
-                  <Line type="monotone" dataKey="realized" stroke="#10B981" strokeWidth={2} name="Realized Savings" />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Monthly Exception Rate</CardTitle>
-              <CardDescription>Percentage of invoices flagged by category</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart
-                  data={[
-                    { month: "Jan", rate: 12 },
-                    { month: "Feb", rate: 15 },
-                    { month: "Mar", rate: 9 },
-                    { month: "Apr", rate: 11 },
-                    { month: "May", rate: 8 },
-                    { month: "Jun", rate: 7 },
-                  ]}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => `${value}%`} />
-                  <Bar dataKey="rate" fill="#A78BFA" />
-                </BarChart>
+                {loading ? (
+                  <div>Loading...</div>
+                ) : (
+                  <LineChart data={savingsTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="month" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number) => `$${(value / 1000).toFixed(0)}K`} />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="identified"
+                      stroke="#5B7FFF"
+                      strokeWidth={2}
+                      name="Identified Savings"
+                    />
+                    <Line type="monotone" dataKey="realized" stroke="#10B981" strokeWidth={2} name="Realized Savings" />
+                  </LineChart>
+                )}
               </ResponsiveContainer>
             </CardContent>
           </Card>
@@ -298,23 +316,27 @@ export default function AnalyticsPage() {
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={categoryDistribution}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={(entry) => entry.name}
-                      outerRadius={100}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {categoryDistribution.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value: number) => `$${(value / 1000).toFixed(0)}K`} />
-                  </PieChart>
+                  {loading ? (
+                    <div>Loading...</div>
+                  ) : (
+                    <PieChart>
+                      <Pie
+                        data={categoryDistribution}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={(entry) => entry.name}
+                        outerRadius={100}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {categoryDistribution.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: number) => `$${(value / 1000).toFixed(0)}K`} />
+                    </PieChart>
+                  )}
                 </ResponsiveContainer>
               </CardContent>
             </Card>
@@ -326,25 +348,29 @@ export default function AnalyticsPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {benchmarkingData
-                    .filter((item) => item.savingsOpportunity !== "$0")
-                    .sort(
-                      (a, b) =>
-                        Number.parseFloat(b.savingsOpportunity.replace(/[$,]/g, "")) -
-                        Number.parseFloat(a.savingsOpportunity.replace(/[$,]/g, "")),
-                    )
-                    .map((item, index) => (
-                      <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                        <div>
-                          <p className="font-medium">{item.category}</p>
-                          <p className="text-sm text-muted-foreground">Currently at {item.percentile} percentile</p>
+                  {loading ? (
+                    <div>Loading...</div>
+                  ) : (
+                    benchmarkingData
+                      .filter((item) => item.savingsOpportunity !== "$0.00")
+                      .sort(
+                        (a, b) =>
+                          Number.parseFloat(b.savingsOpportunity.replace(/[$,]/g, "")) -
+                          Number.parseFloat(a.savingsOpportunity.replace(/[$,]/g, "")),
+                      )
+                      .map((item, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div>
+                            <p className="font-medium">{item.category}</p>
+                            <p className="text-sm text-muted-foreground">Currently at {item.percentile} percentile</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-green-600">{item.savingsOpportunity}</p>
+                            <p className="text-xs text-muted-foreground">potential</p>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-bold text-green-600">{item.savingsOpportunity}</p>
-                          <p className="text-xs text-muted-foreground">potential</p>
-                        </div>
-                      </div>
-                    ))}
+                      ))
+                  )}
                 </div>
               </CardContent>
             </Card>
