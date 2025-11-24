@@ -50,6 +50,7 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
   const [progress, setProgress] = useState(0)
   const [dragActive, setDragActive] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>("")
+  const [contractName, setContractName] = useState("")
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
@@ -86,6 +87,10 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
 
   const handleUpload = async () => {
     if (!contractFile) return
+    if (!contractName.trim()) {
+      setErrorMessage("Contract name is required.")
+      return
+    }
 
     try {
       setUploadState("uploading")
@@ -101,6 +106,7 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
       // 3. Prepare the final contract record with metadata
       const finalContractRecord = {
         ...baseContractRecord,
+        'Contract Name': contractName?.trim() ? contractName : baseContractRecord['Contract Name'],
         'Created Date': new Date().toISOString(),
         'Updated Date': new Date().toISOString(),
         'Validation Config': JSON.stringify(extractedData, null, 2), // Store full extracted data as a JSON string
@@ -167,6 +173,7 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
     setContractFile(null)
     setUploadState("idle")
     setProgress(0)
+    setContractName("")
   }
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -194,6 +201,16 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
 
         {uploadState === "idle" && (
           <div className="grid gap-6 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="contract-name">Contract Name *</Label>
+              <Input
+                id="contract-name"
+                placeholder="e.g., Master Services Agreement with Acme Co."
+                value={contractName}
+                onChange={(e) => setContractName(e.target.value)}
+                required
+              />
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="contract-file">Contract PDF *</Label>
               <div
@@ -284,7 +301,7 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleUpload} disabled={!contractFile}>
+            <Button onClick={handleUpload} disabled={!contractFile || !contractName.trim()}>
               Upload & Save
             </Button>
           </DialogFooter>
