@@ -1,5 +1,5 @@
 // lib/teable-fields.ts
-import type { ValidationException, ComparisonResult } from "./pdf-processor";
+import type { ValidationException, ComparisonResult, ExtractedContractData, BillableItem, ContractParty } from "./pdf-processor";
 
 /**
  * Maps a ValidationException object from the application's internal data structure
@@ -114,4 +114,57 @@ function getRecommendationFromType(type: ValidationException['type']): string {
     default:
       return 'Manual review required.';
   }
+}
+
+/**
+ * Maps an ExtractedContractData object to the specific field names required by the 'contracts' Teable table.
+ * @param contractData - The extracted contract data object.
+ * @returns An object with keys matching the Teable table's column names.
+ */
+export function mapContractDataToTeableFields(contractData: ExtractedContractData): Record<string, unknown> {
+  return {
+    'Contract ID': contractData.contractId,
+    'Contract Number': contractData.contractNumber,
+    'Contract Title': contractData.contractTitle,
+    'Version': contractData.version,
+    'Contract Type': contractData.contractType,
+    'Contract Status': contractData.contractStatus,
+    'Relationship Type': contractData.relationshipType,
+    'Total Contract Value': contractData.totalContractValue,
+    'Annual Value': contractData.annualValue,
+    'Currency': contractData.currency,
+    'Effective Date': contractData.effectiveDate.toISOString().split('T')[0], // YYYY-MM-DD
+    'Expiration Date': contractData.expirationDate.toISOString().split('T')[0], // YYYY-MM-DD
+    'Auto Renewal Enabled': contractData.autoRenewalEnabled,
+    'Renewal Period': contractData.renewalPeriod,
+    'Notice Period Days': contractData.noticePeriodDays,
+    'Hierarchy Level': contractData.hierarchyLevel,
+    'Parent Contract ID': contractData.parentContractId,
+    'Validation Config': JSON.stringify(contractData, null, 2), // Stringify the whole object for reference
+  };
+}
+
+/**
+ * Maps a BillableItem object to the specific field names required by the 'billable_items' Teable table.
+ * @param billableItem - The billable item object.
+ * @returns An object with keys matching the Teable table's column names.
+ */
+export function mapBillableItemToTeableFields(billableItem: BillableItem): Record<string, unknown> {
+  return {
+    'item_description': billableItem.itemDescription,
+    'contract_price': billableItem.unitPrice,
+    'primary_uom': billableItem.unit,
+  };
+}
+
+/**
+ * Maps a ContractParty object to the specific field names required by the 'contract_parties' Teable table.
+ * @param contractParty - The contract party object.
+ * @returns An object with keys matching the Teable table's column names.
+ */
+export function mapContractPartyToTeableFields(contractParty: ContractParty): Record<string, unknown> {
+  return {
+    'Contract Party': contractParty.name,
+    'party_role': contractParty.role,
+  };
 }

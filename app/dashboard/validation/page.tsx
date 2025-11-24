@@ -1,8 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
-import dynamic from 'next/dynamic'
 import { ComparisonResultDisplay } from "@/components/validation/comparison-result-display"
 import { fetchRecords } from "@/lib/teable"
 import { 
@@ -11,11 +9,7 @@ import {
 } from "@/lib/teable-constants"
 import type { ComparisonResult, ValidationException, InvoiceLineItem } from "@/lib/pdf-processor"
 import axios from "axios"
-
-const UploadInvoiceDialog = dynamic(
-  () => import('@/components/invoices/upload-invoice-dialog').then(mod => mod.UploadInvoiceDialog),
-  { ssr: false }
-)
+ 
 
 // This function needs to be updated to also pass the original invoice line items
 async function getLatestComparisonResult(): Promise<ComparisonResult | null> {
@@ -101,16 +95,8 @@ export default function ValidationPage() {
     fetchData();
   }, []);
 
-  const handleValidationComplete = () => {
-    fetchData();
-  };
-
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-end">
-        <UploadInvoiceDialog onInvoiceUploaded={handleValidationComplete} />
-      </div>
-
       {isLoading ? (
         <div className="flex items-center justify-center h-[calc(100vh-200px)]">
           <p>Loading latest validation result...</p>

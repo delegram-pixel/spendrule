@@ -25,8 +25,17 @@ import { Input } from "@/components/ui/input"
 import { Upload, FileText, X, CheckCircle2, Loader2, AlertCircle } from "lucide-react"
 import { extractContractData } from "@/lib/pdf-processor"
 import { contractTypes } from "@/lib/contract-types"
-import { createRecord } from "@/lib/teable"
-import { CONTRACTS_TABLE_ID } from "@/lib/teable-constants"
+import { createRecord, createBatchRecords } from "@/lib/teable"
+import {
+  CONTRACTS_TABLE_ID,
+  BILLABLE_ITEMS_TABLE_ID,
+  CONTRACT_PARTIES_TABLE_ID,
+} from "@/lib/teable-constants"
+import {
+  mapContractDataToTeableFields,
+  mapBillableItemToTeableFields,
+  mapContractPartyToTeableFields,
+} from "@/lib/teable-fields"
 
 type UploadState = "idle" | "uploading" | "success" | "error"
 
@@ -37,8 +46,6 @@ interface UploadContractDialogProps {
 export function UploadContractDialog({ onContractUploaded }: UploadContractDialogProps) {
   const [open, setOpen] = useState(false)
   const [contractFile, setContractFile] = useState<File | null>(null)
-  const [vendorName, setVendorName] = useState("")
-  const [contractType, setContractType] = useState("")
   const [uploadState, setUploadState] = useState<UploadState>("idle")
   const [progress, setProgress] = useState(0)
   const [dragActive, setDragActive] = useState(false)
@@ -78,28 +85,69 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
   }
 
   const handleUpload = async () => {
-    if (!contractFile || !vendorName || !contractType) return
+    if (!contractFile) return
 
     try {
       setUploadState("uploading")
-      setProgress(50) 
+      setProgress(20)
       setErrorMessage("")
 
-      // Extract both structured contract data and text items
-      const { extractedData, items: contractItems } = await extractContractData(contractFile)
-      
-      const contractRecord = {
-        'Contract Name': vendorName,
-        'Contract Type': contractType,
-        'Contract Status': 'Active', // Set a default status
-        // Store text items for proof highlights
-        'Validation Config': JSON.stringify(contractItems),
-        // Store full extracted contract data for validation logic
-        'Extracted Data': JSON.stringify(extractedData),
+      const { extractedData } = await extractContractData(contractFile, (p) => setProgress(20 + p * 0.5)); // Progress from 20 to 70
+      setProgress(70)
+
+      // Map extracted data to Teable fields
+      const baseContractRecord = mapContractDataToTeableFields(extractedData);
+
+      // 3. Prepare the final contract record with metadata
+      const finalContractRecord = {
+        ...baseContractRecord,
+        'Created Date': new Date().toISOString(),
+        'Updated Date': new Date().toISOString(),
+        'Validation Config': JSON.stringify(extractedData, null, 2), // Store full extracted data as a JSON string
       };
 
-      await createRecord(CONTRACTS_TABLE_ID, contractRecord)
-      
+      // DEBUG: Log the data being sent
+      console.log('📤 Contract data being sent:', JSON.stringify(finalContractRecord, null, 2));
+      console.log('🔍 Checking each field type:');
+      Object.entries(finalContractRecord).forEach(([key, value]) => {
+        const type = Array.isArray(value) ? 'array' : typeof value;
+        const isObject = typeof value === 'object' && !Array.isArray(value) && value !== null;
+        console.log(`  ${key}: ${type}${isObject ? ' ⚠️ OBJECT!' : ''}`);
+        if (isObject) {
+          console.error(`❌ PROBLEM FIELD: "${key}" =`, value);
+        }
+      });
+
+      // 4. Create the main contract record and get its ID
+      const createdContract = await createRecord(CONTRACTS_TABLE_ID, finalContractRecord);
+      const contractId = createdContract.id;
+
+      // 5. Create Billable Items, linking them to the new contract
+      const billableItemRecords = extractedData.billableItems.map(item => ({
+        ...mapBillableItemToTeableFields(item),
+        'contract_id': [ { id: contractId } ] // Link to the newly created contract
+      }));
+      try {
+        if (billableItemRecords.length > 0) {
+          await createBatchRecords(BILLABLE_ITEMS_TABLE_ID, billableItemRecords);
+        }
+      } catch (err) {
+        console.error('Failed to create billable items:', err);
+      }
+
+      // 6. Create Contract Parties, linking them to the new contract
+      const contractPartyRecords = extractedData.contractParties.map(party => ({
+        ...mapContractPartyToTeableFields(party),
+        'contract_id': [ { id: contractId } ] // Link to the newly created contract
+      }));
+      try {
+        if (contractPartyRecords.length > 0) {
+          await createBatchRecords(CONTRACT_PARTIES_TABLE_ID, contractPartyRecords);
+        }
+      } catch (err) {
+        console.error('Failed to create contract parties:', err);
+      }
+
       setProgress(100)
       setUploadState("success")
       onContractUploaded()
@@ -117,8 +165,6 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
 
   const resetForm = () => {
     setContractFile(null)
-    setVendorName("")
-    setContractType("")
     setUploadState("idle")
     setProgress(0)
   }
@@ -138,52 +184,23 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
           Upload Contract
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>Upload New Contract</DialogTitle>
           <DialogDescription>
-            Upload a contract PDF to add it to the system.
+            Upload a contract PDF. We'll extract key terms, billable items, and parties.
           </DialogDescription>
         </DialogHeader>
 
         {uploadState === "idle" && (
           <div className="grid gap-6 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="vendor">Vendor Name *</Label>
-                <Input
-                  id="vendor"
-                  placeholder="e.g., MediSupply Corp"
-                  value={vendorName}
-                  onChange={(e) => setVendorName(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="contract-type">Contract Type *</Label>
-                <Select onValueChange={setContractType} value={contractType}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a contract type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {contractTypes.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
             <div className="grid gap-2">
               <Label htmlFor="contract-file">Contract PDF *</Label>
               <div
-                className={`relative border-2 border-dashed rounded-lg p-6 transition-colors ${
-                  dragActive ? "border-primary bg-primary/5" : "border-border"
-                }`}
+                className={`relative border-2 border-dashed rounded-lg p-6 transition-colors ${dragActive ? "border-primary" : "border-border"}`}
                 onDragEnter={handleDrag}
-                onDragLeave={handleDrag}
                 onDragOver={handleDrag}
+                onDragLeave={handleDrag}
                 onDrop={handleDrop}
               >
                 {!contractFile ? (
@@ -224,15 +241,15 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
         )}
 
         {uploadState === "uploading" && (
-          <div className="grid gap-4 py-8">
+          <div className="grid gap-4 py-6">
             <div className="flex items-center justify-center">
               <Loader2 className="h-12 w-12 text-primary animate-spin" />
             </div>
             <div className="space-y-2 text-center">
-              <p className="font-medium">Uploading contract...</p>
-              <p className="text-sm text-muted-foreground">This may take a moment.</p>
-              <Progress value={progress} className="mt-4" />
+              <p className="font-medium">Processing contract...</p>
+              <p className="text-sm text-muted-foreground">Extracting clauses, billable items, and parties</p>
             </div>
+            <Progress value={progress} />
           </div>
         )}
 
@@ -243,11 +260,11 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
             </div>
             <div className="text-center">
               <p className="font-medium">Upload Complete!</p>
-              <p className="text-sm text-muted-foreground">The contract has been added.</p>
+              <p className="text-sm text-muted-foreground">The contract and related records have been saved.</p>
             </div>
           </div>
         )}
-        
+
         {uploadState === "error" && (
           <div className="grid gap-4 py-8">
             <div className="flex items-center justify-center">
@@ -264,13 +281,10 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
 
         {uploadState === "idle" && (
           <DialogFooter>
-            <Button variant="outline" onClick={() => handleOpenChange(false)}>
+            <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={handleUpload}
-              disabled={!contractFile || !vendorName || !contractType}
-            >
+            <Button onClick={handleUpload} disabled={!contractFile}>
               Upload & Save
             </Button>
           </DialogFooter>

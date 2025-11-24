@@ -20,24 +20,15 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
 import { Upload, FileText, X, CheckCircle2, Loader2, AlertCircle } from "lucide-react"
-import { createRecord, fetchRecords } from "@/lib/teable"
-import { INVOICES_TABLE_ID, CONTRACTS_TABLE_ID } from "@/lib/teable-constants"
+import { createRecord } from "@/lib/teable"
+import { INVOICES_TABLE_ID } from "@/lib/teable-constants"
 import { invoiceTypes } from "@/lib/invoice-types"
 import { extractInvoiceData } from "@/lib/pdf-processor"
 
 type UploadState = "idle" | "uploading" | "success" | "error"
 
-interface Contract {
-  id: string;
-  fields: {
-    'Contract Name': string;
-    'Contract Type': string;
-    [key: string]: any;
-  }
-}
 
 interface UploadInvoiceDialogProps {
   onInvoiceUploaded: () => void
@@ -48,30 +39,14 @@ export function UploadInvoiceDialog({ onInvoiceUploaded }: UploadInvoiceDialogPr
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [vendorName, setVendorName] = useState("")
   const [invoiceType, setInvoiceType] = useState("")
-  const [selectedContractId, setSelectedContractId] = useState<string | null>(null)
-  const [contracts, setContracts] = useState<Contract[]>([])
-  const [isLoadingContracts, setIsLoadingContracts] = useState(false)
   const [uploadState, setUploadState] = useState<UploadState>("idle")
   const [errorMessage, setErrorMessage] = useState<string>("")
 
 
 
   useEffect(() => {
-    if (open) {
-      const getContracts = async () => {
-        setIsLoadingContracts(true)
-        try {
-          const fetchedContracts = await fetchRecords(CONTRACTS_TABLE_ID)
-          setContracts(fetchedContracts as unknown as Contract[])
-        } catch (error) {
-          console.error("Failed to fetch contracts:", error)
-        } finally {
-          setIsLoadingContracts(false)
-        }
-      }
-      getContracts()
-    }
-  }, [open])
+    // no-op: keep client effect placeholder
+  }, [])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -85,7 +60,7 @@ export function UploadInvoiceDialog({ onInvoiceUploaded }: UploadInvoiceDialogPr
 
 
   const handleUpload = async () => {
-    if (!invoiceFile || !vendorName || !invoiceType || !selectedContractId) return
+    if (!invoiceFile) return
 
     try {
       setUploadState("uploading")
@@ -95,14 +70,9 @@ export function UploadInvoiceDialog({ onInvoiceUploaded }: UploadInvoiceDialogPr
       const { extractedData: invoiceData, items: invoiceItems } = await extractInvoiceData(invoiceFile)
       
       const invoiceRecord = {
-        'Invoice Number': invoiceData.invoiceNumber || "N/A",
-        'Vendor Name': vendorName,
-        'Invoice Type': invoiceType,
-        'Total Amount': invoiceData.totalAmount || 0,
-        'Invoice Date': invoiceData.invoiceDate?.toISOString() || "N/A",
-        'contract_id': selectedContractId, // Add the contract_id
-        // Storing the extracted line items in a long text field as JSON
-        'Extracted Data': JSON.stringify(invoiceItems), 
+        'Invoice Number 2': invoiceData.invoiceNumber || "N/A",
+        'Invoice Date': invoiceData.invoiceDate?.toISOString().split('T')[0] || "N/A",
+        'Gross Amount': invoiceData.totalAmount || 0,
       };
 
       await createRecord(INVOICES_TABLE_ID, invoiceRecord)
@@ -125,7 +95,6 @@ export function UploadInvoiceDialog({ onInvoiceUploaded }: UploadInvoiceDialogPr
     setInvoiceFile(null)
     setVendorName("")
     setInvoiceType("")
-    setSelectedContractId(null)
     setUploadState("idle")
   }
 
@@ -181,25 +150,7 @@ export function UploadInvoiceDialog({ onInvoiceUploaded }: UploadInvoiceDialogPr
                           </div>
                         </div>
             
-                        <div className="grid gap-2">
-                          <Label htmlFor="contract-select">Contract *</Label>
-                          <Select
-                            onValueChange={setSelectedContractId}
-                            disabled={isLoadingContracts}
-                            value={selectedContractId || ""}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder={isLoadingContracts ? "Loading contracts..." : "Select a contract"} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {contracts.map(contract => (
-                                <SelectItem key={contract.id} value={contract.id}>
-                                  {contract.fields['Contract Name']} - {contract.fields['Contract Type']}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        
                         
                         <div className="grid gap-2">
                           <Label htmlFor="invoice-file">Invoice PDF *</Label>
@@ -292,7 +243,7 @@ export function UploadInvoiceDialog({ onInvoiceUploaded }: UploadInvoiceDialogPr
                         </Button>
                         <Button
                           onClick={handleUpload}
-                          disabled={!invoiceFile || !vendorName || !invoiceType || !selectedContractId}
+                          disabled={!invoiceFile}
                         >
                           Upload & Save
                         </Button>

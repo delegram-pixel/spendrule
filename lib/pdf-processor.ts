@@ -33,20 +33,7 @@ function getGeminiModel() {
 
 // --- INTERFACES (remain the same) ---
 
-export interface ExtractedContractData {
-  contractId: string;
-  vendorName: string;
-  effectiveDate: Date; // ✅ Changed from string
-  expirationDate: Date; // ✅ Changed from string
-  pricingTerms: PricingTerm[];
-  paymentTerms: string;
-  penaltyClauses: string[];
-  complianceRequirements: string[];
-  confidence: number;
-  pageReferences: { [key: string]: number };
-}
-
-export interface PricingTerm {
+export interface BillableItem {
   itemDescription: string;
   unitPrice: number;
   unit: string;
@@ -54,6 +41,39 @@ export interface PricingTerm {
   conditions?: string;
   pageNumber: number;
   confidence: number;
+}
+
+export interface ContractParty {
+    name: string;
+    role: "Vendor" | "Client" | "Partner" | "Contractor" | "Supplier" | "Other";
+}
+
+export interface ExtractedContractData {
+  contractName: string;
+  contractId: string;
+  contractNumber: string;
+  contractTitle: string;
+  version: string;
+  contractType: "Master Service Agreement" | "Statement of Work" | "Purchase Order" | "License Agreement" | "Other";
+  contractStatus: "Draft" | "Active" | "Pending" | "Expired" | "Terminated";
+  relationshipType: "Parent" | "Child" | "Standalone";
+  totalContractValue: number;
+  annualValue: number;
+  currency: string;
+  effectiveDate: Date;
+  expirationDate: Date;
+  autoRenewalEnabled: boolean;
+  renewalPeriod: string;
+  noticePeriodDays: number;
+  hierarchyLevel: number;
+  parentContractId: string | null;
+  billableItems: BillableItem[];
+  contractParties: ContractParty[];
+  paymentTerms: string;
+  penaltyClauses: string[];
+  complianceRequirements: string[];
+  confidence: number;
+  pageReferences: { [key: string]: number };
 }
 
 export interface ExtractedInvoiceData {
@@ -95,7 +115,7 @@ export interface ValidationException {
   type: "price_mismatch" | "quantity_exceeded" | "unauthorized_item" | "expired_contract";
   severity: "critical" | "warning" | "info";
   lineItem: InvoiceLineItem;
-  contractTerm?: PricingTerm;
+  contractTerm?: BillableItem;
   variance: number;
   description: string;
   proofData: ProofData;
@@ -178,28 +198,54 @@ export async function extractContractData(
   onProgress?.(40);
 
   const prompt = `
-    You are an expert contract analysis AI. Extract key information and return ONLY valid JSON.
-    Return dates in ISO format (YYYY-MM-DD).
+    You are an expert contract analysis AI. Extract key information based on the JSON schema and instructions below.
+    Return ONLY valid JSON that strictly adheres to the schema.
 
+    **Instructions & Constraints:**
+    1.  **Dates**: Return all dates in ISO format (YYYY-MM-DD).
+    2.  **Single-Select Fields**: For the fields \`contractType\`, \`contractStatus\`, and \`relationshipType\`, you MUST choose one of the exact, case-sensitive values provided in the schema below. Do not invent new values. If no value seems to fit, use "Other".
+
+    **JSON Schema:**
     {
+      "contractName": "string",
       "contractId": "string",
-      "vendorName": "string",
+      "contractNumber": "string",
+      "contractTitle": "string",
+      "version": "1.0",
+      "contractType": ["Master Service Agreement", "Statement of Work", "Purchase Order", "License Agreement", "Other"],
+      "contractStatus": ["Draft", "Active", "Pending", "Expired", "Terminated"],
+      "relationshipType": ["Parent", "Child", "Standalone"],
+      "totalContractValue": 50000.00,
+      "annualValue": 25000.00,
+      "currency": "USD",
       "effectiveDate": "YYYY-MM-DD",
       "expirationDate": "YYYY-MM-DD",
-      "pricingTerms": [{
-        "itemDescription": "string",
-        "unitPrice": 57.00,
+      "autoRenewalEnabled": true,
+      "renewalPeriod": "1 year",
+      "noticePeriodDays": 90,
+      "hierarchyLevel": 1,
+      "parentContractId": null,
+      "billableItems": [{
+        "itemDescription": "Consulting Services",
+        "unitPrice": 150.00,
         "unit": "hour",
-        "quantity": 1,
+        "quantity": 100,
         "conditions": "standard rate",
-        "pageNumber": 1,
+        "pageNumber": 2,
         "confidence": 0.95
       }],
+      "contractParties": [{
+          "name": "Vendor Corp",
+          "role": "Vendor"
+      }, {
+          "name": "Client Inc.",
+          "role": "Client"
+      }],
       "paymentTerms": "Net 30",
-      "penaltyClauses": [],
-      "complianceRequirements": [],
+      "penaltyClauses": ["Late payment fee of 1.5% per month"],
+      "complianceRequirements": ["HIPAA"],
       "confidence": 0.90,
-      "pageReferences": { "pricing": 1 }
+      "pageReferences": { "pricing": 2, "signatures": 4 }
     }
 
     Contract Text:
@@ -223,8 +269,8 @@ export async function extractContractData(
     }
 
     // ✅ Convert date strings to Date objects
-    parsedData.effectiveDate = new Date(parsedData.effectiveDate);
-    parsedData.expirationDate = new Date(parsedData.expirationDate);
+    if(parsedData.effectiveDate) parsedData.effectiveDate = new Date(parsedData.effectiveDate);
+    if(parsedData.expirationDate) parsedData.expirationDate = new Date(parsedData.expirationDate);
 
     console.log("[AI] Contract extraction complete");
     onProgress?.(100);
@@ -320,7 +366,7 @@ export async function compareInvoiceToContract(
     // Compare each invoice line item to contract terms
     for (const lineItem of invoiceData.lineItems) {
       let isCompliant = true;
-      const matchingTerm = contractData.pricingTerms.find(
+      const matchingTerm = contractData.billableItems.find(
         (term) =>
           term.itemDescription.toLowerCase().includes(lineItem.description.toLowerCase()) ||
           lineItem.description.toLowerCase().includes(term.itemDescription.toLowerCase())
@@ -423,7 +469,7 @@ function findTextCoordinates(items: TextItem[], searchTerm: string, pageNumber: 
  */
 function generateProofData(
     lineItem: InvoiceLineItem,
-    contractTerm: PricingTerm | null,
+    contractTerm: BillableItem | null,
     invoiceItems: TextItem[],
     contractItems: TextItem[]
 ): ProofData {

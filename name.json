@@ -1,0 +1,757 @@
+-- ContractSphere_v3 — Final Production Schema (November 21, 2025)
+-- This is the exact database that powers SpendRule today.
+
+
+CREATE SCHEMA IF NOT EXISTS contractsphere_v3;
+SET search_path TO contractsphere_v3;
+
+-- 1. parties
+CREATE TABLE parties (
+    party_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    party_type          VARCHAR(50) NOT NULL,                        -- Vendor, Customer, GPO, etc.
+    legal_name          VARCHAR(255) NOT NULL,
+    trading_name        VARCHAR(255),
+    party_number        VARCHAR(50) UNIQUE,                          -- ERP Supplier/Customer #
+    tax_id              VARCHAR(50),
+    duns_number         VARCHAR(9),
+    npi_number          VARCHAR(10),
+    cage_code           VARCHAR(5),
+    alternate_names     JSONB DEFAULT '[]'::jsonb,                   -- All detected aliases
+    payment_terms_config JSONB,
+    primary_contact_email VARCHAR(255),
+    primary_contact_phone VARCHAR(50),
+    party_status        VARCHAR(50) NOT NULL,
+    created_date        TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_by          VARCHAR(100) NOT NULL,
+    updated_date        TIMESTAMP,
+    updated_by          VARCHAR(100)
+);
+
+-- 2. locations
+CREATE TABLE locations (
+    location_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_code       VARCHAR(50) NOT NULL UNIQUE,
+    location_name       VARCHAR(255) NOT NULL,
+    location_type       VARCHAR(50),
+    address             TEXT,
+    city                VARCHAR(100),
+    state_province      VARCHAR(50),
+    postal_code         VARCHAR(20),
+    country_code        VARCHAR(2),
+    facility_type       VARCHAR(50),
+    bed_count           INTEGER,
+    is_active           BOOLEAN DEFAULT TRUE,
+    created_date        TIMESTAMP DEFAULT NOW()
+);
+
+-- 3. pricing_models
+CREATE TABLE pricing_models (
+    model_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    model_name          VARCHAR(255) NOT NULL,
+    model_type          VARCHAR(50) NOT NULL,
+    version             VARCHAR(20) NOT NULL,
+    calculation_method  TEXT,
+    calculation_formula JSONB,
+    base_rate           DECIMAL(15,4),
+    currency            VARCHAR(3) NOT NULL,
+    proration_method    VARCHAR(50),
+    partial_month_calculation VARCHAR(50),
+    is_active           BOOLEAN DEFAULT TRUE,
+    created_date        TIMESTAMP DEFAULT NOW()
+);
+
+-- 4. pricing_tiers
+CREATE TABLE pricing_tiers (
+    tier_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    model_id            UUID NOT NULL REFERENCES pricing_models(model_id),
+    tier_sequence       INTEGER NOT NULL,
+    tier_name           VARCHAR(100),
+    min_value           DECIMAL(15,4) NOT NULL,
+    max_value           DECIMAL(15,4),
+    rate                DECIMAL(15,4) NOT NULL,
+    rate_type           VARCHAR(50),
+    is_cumulative       BOOLEAN,
+    applies_to_overage_only BOOLEAN
+);
+
+-- 5. document_metadata
+CREATE TABLE document_metadata (
+    document_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_type       VARCHAR(50) NOT NULL,                        -- 'contract' or 'invoice'
+    document_name       VARCHAR(255) NOT NULL,
+    document_url        TEXT,
+    file_hash           VARCHAR(64),
+    total_pages         INTEGER,
+    file_size_bytes     BIGINT,
+    mime_type           VARCHAR(100),
+    ocr_completed       BOOLEAN DEFAULT FALSE,
+    extraction_completed BOOLEAN DEFAULT FALSE,
+    validation_completed BOOLEAN DEFAULT FALSE,
+    uploaded_date       TIMESTAMP NOT NULL DEFAULT NOW(),
+    uploaded_by         VARCHAR(100) NOT NULL
+);
+
+-- 6. contracts (hierarchical)
+CREATE TABLE contracts (
+    contract_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    parent_contract_id  UUID REFERENCES contracts(contract_id),      -- amendments/SOWs
+    relationship_type   VARCHAR(20),
+    hierarchy_level     INTEGER,
+    contract_number     VARCHAR(100) NOT NULL UNIQUE,
+    contract_title      VARCHAR(500) NOT NULL,
+    contract_type       VARCHAR(50) NOT NULL,
+    effective_date      DATE NOT NULL,
+    expiration_date     DATE NOT NULL,
+    auto_renewal_enabled BOOLEAN,
+    renewal_period      VARCHAR(50),
+    notice_period_days  INTEGER,
+    total_contract_value DECIMAL(15,2),
+    annual_value        DECIMAL(15,2),
+    currency            VARCHAR(3) NOT NULL,
+    validation_config   JSONB,
+    contract_status     VARCHAR(50) NOT NULL,
+    version             VARCHAR(20),
+    created_date        TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_by          VARCHAR(100) NOT NULL,
+    updated_date        TIMESTAMP,
+    updated_by          VARCHAR(100)
+);
+
+-- 7. billable_items
+CREATE TABLE billable_items (
+    item_id             UUID PRIMARY KEY UUID DEFAULT gen_random_uuid(),
+    contract_id         UUID NOT NULL REFERENCES contracts(contract_id),
+    pricing_model_id    UUID REFERENCES pricing_models(model_id),
+    item_name           VARCHAR(255) NOT NULL,
+    item_description    TEXT,
+    item_category       VARCHAR(100),
+    service_category_id INTEGER REFERENCES service_categories(category_id),
+    list_price          DECIMAL(15,4) NOT NULL,
+    contract_price      DECIMAL(15,4),
+    price_floor         DECIMAL(15,4),
+    price_ceiling       DECIMAL(15,4),
+    allowed_variance_type VARCHAR(20),
+    allowed_variance_value DECIMAL(10,4),
+    primary_uom         VARCHAR(50) NOT NULL,
+    allowed_uoms        JSONB,
+    uom_conversion_rules JSONB,
+    currency            VARCHAR(3) NOT NULL,
+    billing_frequency   VARCHAR(50),
+    rate_type           VARCHAR(50),
+    sku                 VARCHAR(100),
+    catalog_number     VARCHAR(100),
+    gl_account          VARCHAR(50),
+    created_date        TIMESTAMP DEFAULT NOW()
+);
+
+-- 8. invoices (full ERP parity)
+CREATE TABLE invoices (
+    invoice_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_number      VARCHAR(100),
+    vendor_party_id     UUID NOT NULL REFERENCES parties(party_id),
+    customer_party_id   UUID NOT NULL REFERENCES parties(party_id),
+    contract_id         UUID REFERENCES contracts(contract_id),
+    source_document_id  UUID REFERENCES document_metadata(document_id),
+    po_number           VARCHAR(50),                                 -- ERP PO #
+    external_voucher_id VARCHAR(50),                                 -- Workday/Infor voucher
+    ap_unit             VARCHAR(20),                                 -- HFAH, WHMC, CL, etc.
+    invoice_date        DATE NOT NULL,
+    payment_date        DATE,
+    service_period_start DATE,
+    service_period_end  DATE,
+    net_service_amount  DECIMAL(15,2) NOT NULL,
+    tax_amount          DECIMAL(15,2),
+    shipping_handling   DECIMAL(15,2),
+    fuel_surcharge      DECIMAL(15,2),
+    miscellaneous_charges DECIMAL(15,2),
+    gross_amount        DECIMAL(15,2) NOT NULL,
+    currency            VARCHAR(3) NOT NULL,
+    billing_aggregation_level VARCHAR(50),
+    current_status      VARCHAR(50) NOT NULL,
+    validation_status   VARCHAR(50),
+    auto_approval_eligible BOOLEAN,
+    created_date        TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_by          VARCHAR(100) NOT NULL,
+    updated_date        TIMESTAMP,
+    updated_by          VARCHAR(100)
+);
+
+-- 9. invoice_line_items
+CREATE TABLE invoice_line_items (
+    line_item_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_id          UUID NOT NULL REFERENCES invoices(invoice_id),
+    line_number         INTEGER NOT NULL,
+    billable_item_id    UUID REFERENCES billable_items(item_id),
+    extraction_id       UUID REFERENCES document_extraction_data(extraction_id),
+    description         TEXT NOT NULL,
+    invoice_quantity    DECIMAL(15,4),
+    invoice_uom         VARCHAR(50),
+    invoice_unit_price  DECIMAL(15,4),
+    extended_amount     DECIMAL(15,2) NOT NULL,
+    service_period_start DATE,
+    service_period_end  DATE,
+    contract_uom        VARCHAR(50),
+    uom_conversion_factor DECIMAL(10,4),
+    normalized_quantity DECIMAL(15,4),
+    normalized_unit_price DECIMAL(15,4),
+    expected_unit_price DECIMAL(15,4),
+    price_variance      DECIMAL(15,2),
+    quantity_variance   DECIMAL(15,4),
+    within_tolerance    BOOLEAN,
+    service_category_id INTEGER REFERENCES service_categories(category_id),
+    gl_account          VARCHAR(50),
+    department          VARCHAR(50),
+    project             VARCHAR(50),
+    cost_center         VARCHAR(50),
+    source_line_text    TEXT,
+    validation_status   VARCHAR(50),
+    created_date        TIMESTAMP DEFAULT NOW()
+);
+
+-- 10. document_extraction_data
+CREATE TABLE document_extraction_data (
+    extraction_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id         UUID NOT NULL REFERENCES document_metadata(document_id),
+    invoice_id          UUID REFERENCES invoices(invoice_id),
+    contract_id         UUID REFERENCES contracts(contract_id),
+    entity_type         VARCHAR(50) NOT NULL,
+    field_name          VARCHAR(100) NOT NULL,
+    extracted_value     TEXT,
+    normalized_value    TEXT,
+    confidence_score    DECIMAL(5,4),
+    extraction_method   VARCHAR(50),
+    overall_confidence  DECIMAL(5,4),
+    processing_time_ms  INTEGER,
+    requires_human_review BOOLEAN,
+    source_page_number  INTEGER,
+    source_section      VARCHAR(100),
+    bounding_box_coordinates JSONB,
+    text_snippet        TEXT,
+    is_validated        BOOLEAN,
+    validation_notes    TEXT,
+    extracted_date      TIMESTAMP DEFAULT NOW(),
+    extraction_engine_version VARCHAR(20)
+);
+
+-- 11. invoice_validations
+CREATE TABLE invoice_validations (
+    validation_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_id          UUID NOT NULL REFERENCES invoices(invoice_id),
+    request_id          UUID,
+    validation_date     TIMESTAMP NOT NULL DEFAULT NOW(),
+    validation_engine_version VARCHAR(20),
+    validation_config_used JSONB,
+    overall_status      VARCHAR(50) NOT NULL,
+    confidence_score    DECIMAL(5,2),
+    contract_matched    BOOLEAN,
+    vendor_validated    BOOLEAN,
+    date_range_valid    BOOLEAN,
+    currency_match      BOOLEAN,
+    expected_net_amount DECIMAL(15,2),
+    actual_net_amount   DECIMAL(15,2),
+    variance_amount     DECIMAL(15,2),
+    potential_savings   DECIMAL(15,2),
+    recommended_payment_amount DECIMAL(15,2),
+    processing_time_ms  INTEGER,
+    validation_method   VARCHAR(50),
+    rules_applied_count INTEGER,
+    auto_approved       BOOLEAN,
+    approval_notes      TEXT,
+    validated_by        VARCHAR(100),
+    reviewed_by         VARCHAR(100),
+    review_date         TIMESTAMP
+);
+
+-- 12. validation_exceptions
+CREATE TABLE validation_exceptions (
+    exception_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    validation_id       UUID NOT NULL REFERENCES invoice_validations(validation_id),
+    line_number         INTEGER,
+    field_name          VARCHAR(100),
+    exception_type      VARCHAR(100) NOT NULL,
+    exception_category  VARCHAR(50),
+    severity            VARCHAR(20) NOT NULL,
+    expected_value      TEXT,
+    actual_value        TEXT,
+    variance_amount     DECIMAL(15,2),
+    root_cause          VARCHAR(100),
+    contract_extraction_id UUID REFERENCES document_extraction_data(extraction_id),
+    invoice_extraction_id UUID REFERENCES document_extraction_data(extraction_id),
+    message             TEXT NOT NULL,
+    recommendation      VARCHAR(100),
+    resolved            BOOLEAN DEFAULT FALSE,
+    resolution_notes    TEXT,
+    resolved_by         VARCHAR(100),
+    resolved_date       TIMESTAMP
+);
+
+-- 13. line_item_matches
+CREATE TABLE line_item_matches (
+    match_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    line_item_id        UUID NOT NULL REFERENCES invoice_line_items(line_item_id),
+    billable_item_id    UUID NOT NULL REFERENCES billable_items(item_id),
+    match_confidence     DECIMAL(5,2) NOT NULL,
+    match_method        VARCHAR(50),
+    match_score_breakdown JSONB,
+    price_valid         BOOLEAN,
+    quantity_valid      BOOLEAN,
+    uom_valid           BOOLEAN,
+    within_tolerance    BOOLEAN,
+    matched_date        TIMESTAMP DEFAULT NOW(),
+    matched_by          VARCHAR(100)
+);
+
+-- 14. contract_parties (junction with role)
+CREATE TABLE contract_parties (
+    contract_id         UUID NOT NULL REFERENCES contracts(contract_id),
+    party_id            UUID NOT NULL REFERENCES parties(party_id),
+    party_role          VARCHAR(50) NOT NULL,                        -- Vendor, Customer, Distributor, GPO, etc.
+    is_primary          BOOLEAN,
+    specific_payment_terms JSONB,
+    PRIMARY KEY (contract_id, party_id, party_role)
+);
+
+-- 15. contract_locations (junction)
+CREATE TABLE contract_locations (
+    contract_id         UUID NOT NULL REFERENCES contracts(contract_id),
+    location_id            UUID NOT NULL REFERENCES locations(location_id),
+    is_primary          BOOLEAN,
+    location_specific_pricing JSONB,
+    service_level_requirements JSONB,
+    PRIMARY KEY (contract_id, location_id)
+);
+
+-- 16. audit_log
+CREATE TABLE audit_log (
+    audit_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    table_name          VARCHAR(100) NOT NULL,
+    record_id           UUID NOT NULL,
+    action              VARCHAR(20) NOT NULL,
+    changed_fields      JSONB,
+    old_values          JSONB,
+    new_values          JSONB,
+    changed_by          VARCHAR(100) NOT NULL,
+    changed_date        TIMESTAMP DEFAULT NOW(),
+    change_reason       TEXT
+);
+
+-- 17. approval_levels
+CREATE TABLE approval_levels (
+    level_id            SERIAL PRIMARY KEY,
+    level_name          VARCHAR(50) NOT NULL,
+    approval_sequence   INTEGER NOT NULL UNIQUE,
+    min_amount          DECIMAL(15,2),
+    max_amount          DECIMAL(15,2),
+    requires_role       VARCHAR(100),
+    escalation_days     INTEGER DEFAULT 3,
+    is_active           BOOLEAN DEFAULT TRUE
+);
+
+-- 18. invoice_approval_requests
+CREATE TABLE invoice_approval_requests (
+    approval_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_id          UUID NOT NULL REFERENCES invoices(invoice_id) ON DELETE CASCADE,
+    validation_id       UUID REFERENCES invoice_validations(validation_id),
+    current_level       INTEGER NOT NULL REFERENCES approval_levels(level_id),
+    current_status      VARCHAR(30) NOT NULL DEFAULT 'Pending',
+    required_by_date    TIMESTAMP,
+    assigned_to_user    VARCHAR(100),
+    assigned_to_role    VARCHAR(100),
+    assigned_date       TIMESTAMP DEFAULT NOW(),
+    decision            VARCHAR(30),
+    decided_by          VARCHAR(100),
+    decided_date        TIMESTAMP,
+    approved_amount     DECIMAL(15,2),
+    rejection_reason    VARCHAR(100),
+    comments            TEXT,
+    is_final_approval   BOOLEAN DEFAULT FALSE,
+    escalation_count    INTEGER DEFAULT 0,
+    created_date        TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_by          VARCHAR(100) NOT NULL
+);
+
+-- 19. invoice_approval_history
+CREATE TABLE invoice_approval_history (
+    history_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    approval_id         UUID NOT NULL REFERENCES invoice_approval_requests(approval_id) ON DELETE CASCADE,
+    status_from         VARCHAR(30),
+    status_to           VARCHAR(30) NOT NULL,
+    changed_by          VARCHAR(100) NOT NULL,
+    changed_date        TIMESTAMP NOT NULL DEFAULT NOW(),
+    comment             TEXT,
+    amount_change       DECIMAL(15,2)
+);
+
+-- 20. service_categories (your purchased services taxonomy)
+CREATE TABLE service_categories (
+    category_id         SERIAL PRIMARY KEY,
+    parent_id           INTEGER REFERENCES service_categories(category_id),
+    category_name       VARCHAR(100) NOT NULL,
+    subcategory_name    VARCHAR(100),
+    full_path           VARCHAR(255) GENERATED ALWAYS AS (COALESCE(subcategory_name || ' → ', '') || category_name) STORED,
+    is_active           BOOLEAN DEFAULT TRUE
+);
+
+-- 21. co_dev_partnerships (equity + discount tracking)
+CREATE TABLE co_dev_partnerships (
+    partner_id                  UUID PRIMARY KEY REFERENCES parties(party_id),
+    cohort                      VARCHAR(10) NOT NULL CHECK (cohort IN ('Cohort1', 'Cohort2')),
+    in_scope_spend_total        DECIMAL(15,2) NOT NULL,
+    go_live_target              DATE NOT NULL,
+    equity_allocation_pct       DECIMAL(5,3) NOT NULL,
+    milestones_completed        INTEGER DEFAULT 0,               -- 0–4
+    extra_discount_eligible     BOOLEAN DEFAULT FALSE,
+    created_date                TIMESTAMP DEFAULT NOW()
+);
+
+-- Indexes for performance (what we actually run in prod)
+CREATE INDEX idx_invoice_vendor ON invoices(vendor_party_id);
+CREATE INDEX idx_invoice_contract ON invoices(contract_id);
+CREATE INDEX idx_invoice_status ON invoices(current_status);
+CREATE INDEX idx_exception_invoice ON validation_exceptions(invoice_id);
+CREATE INDEX idx_approval_invoice ON invoice_approval_requests(invoice_id);
+CREATE INDEX idx_extraction_document ON document_extraction_data(document_id);
+
+▶## Entity Relationships & Provenance
+	### 1. Relationships & Foreign Keys (Connections Table)
+	Here’s a compact “connections” table for quick reference.
+	<table header-row="true">
+		<tr>
+			<td>**From Table**</td>
+			<td>**From Column**</td>
+			<td>**To Table**</td>
+			<td>**To Column**</td>
+			<td>**Relationship / Notes**</td>
+		</tr>
+		<tr>
+			<td>pricing_tiers</td>
+			<td>model_id</td>
+			<td>pricing_models</td>
+			<td>model_id</td>
+			<td>Many tiers per pricing model.</td>
+		</tr>
+		<tr>
+			<td>contracts</td>
+			<td>parent_contract_id</td>
+			<td>contracts</td>
+			<td>contract_id</td>
+			<td>Contract hierarchy (parent/child).</td>
+		</tr>
+		<tr>
+			<td>billable_items</td>
+			<td>contract_id</td>
+			<td>contracts</td>
+			<td>contract_id</td>
+			<td>Contract has many billable items.</td>
+		</tr>
+		<tr>
+			<td>billable_items</td>
+			<td>pricing_model_id</td>
+			<td>pricing_models</td>
+			<td>model_id</td>
+			<td>Optional link to pricing model.</td>
+		</tr>
+		<tr>
+			<td>billable_items</td>
+			<td>service_category_id</td>
+			<td>service_categories</td>
+			<td>category_id</td>
+			<td>Billable item mapped to taxonomy.</td>
+		</tr>
+		<tr>
+			<td>invoices</td>
+			<td>vendor_party_id</td>
+			<td>parties</td>
+			<td>party_id</td>
+			<td>Vendor on invoice.</td>
+		</tr>
+		<tr>
+			<td>invoices</td>
+			<td>customer_party_id</td>
+			<td>parties</td>
+			<td>party_id</td>
+			<td>Customer/health system on invoice.</td>
+		</tr>
+		<tr>
+			<td>invoices</td>
+			<td>contract_id</td>
+			<td>contracts</td>
+			<td>contract_id</td>
+			<td>Invoice associated to contract.</td>
+		</tr>
+		<tr>
+			<td>invoices</td>
+			<td>source_document_id</td>
+			<td>document_metadata</td>
+			<td>document_id</td>
+			<td>Original invoice document.</td>
+		</tr>
+		<tr>
+			<td>invoice_line_items</td>
+			<td>invoice_id</td>
+			<td>invoices</td>
+			<td>invoice_id</td>
+			<td>Invoice to its line items.</td>
+		</tr>
+		<tr>
+			<td>invoice_line_items</td>
+			<td>billable_item_id</td>
+			<td>billable_items</td>
+			<td>item_id</td>
+			<td>Line linked to contract billable item.</td>
+		</tr>
+		<tr>
+			<td>invoice_line_items</td>
+			<td>extraction_id</td>
+			<td>document_extraction_data</td>
+			<td>extraction_id</td>
+			<td>Line traced back to specific extraction.</td>
+		</tr>
+		<tr>
+			<td>invoice_line_items</td>
+			<td>service_category_id</td>
+			<td>service_categories</td>
+			<td>category_id</td>
+			<td>Line categorized by services taxonomy.</td>
+		</tr>
+		<tr>
+			<td>document_extraction_data</td>
+			<td>document_id</td>
+			<td>document_metadata</td>
+			<td>document_id</td>
+			<td>Extraction belongs to document.</td>
+		</tr>
+		<tr>
+			<td>document_extraction_data</td>
+			<td>invoice_id</td>
+			<td>invoices</td>
+			<td>invoice_id</td>
+			<td>Extraction associated to invoice.</td>
+		</tr>
+		<tr>
+			<td>document_extraction_data</td>
+			<td>contract_id</td>
+			<td>contracts</td>
+			<td>contract_id</td>
+			<td>Extraction associated to contract.</td>
+		</tr>
+		<tr>
+			<td>invoice_validations</td>
+			<td>invoice_id</td>
+			<td>invoices</td>
+			<td>invoice_id</td>
+			<td>Validation per invoice.</td>
+		</tr>
+		<tr>
+			<td>validation_exceptions</td>
+			<td>validation_id</td>
+			<td>invoice_validations</td>
+			<td>validation_id</td>
+			<td>Exceptions belong to a validation run.</td>
+		</tr>
+		<tr>
+			<td>validation_exceptions</td>
+			<td>contract_extraction_id</td>
+			<td>document_extraction_data</td>
+			<td>extraction_id</td>
+			<td>Link to contract-side extraction.</td>
+		</tr>
+		<tr>
+			<td>validation_exceptions</td>
+			<td>invoice_extraction_id</td>
+			<td>document_extraction_data</td>
+			<td>extraction_id</td>
+			<td>Link to invoice-side extraction.</td>
+		</tr>
+		<tr>
+			<td>line_item_matches</td>
+			<td>line_item_id</td>
+			<td>invoice_line_items</td>
+			<td>line_item_id</td>
+			<td>Matching between invoice lines…</td>
+		</tr>
+		<tr>
+			<td>line_item_matches</td>
+			<td>billable_item_id</td>
+			<td>billable_items</td>
+			<td>item_id</td>
+			<td>…and contract billable items.</td>
+		</tr>
+		<tr>
+			<td>contract_parties</td>
+			<td>contract_id</td>
+			<td>contracts</td>
+			<td>contract_id</td>
+			<td>Contract-party mapping.</td>
+		</tr>
+		<tr>
+			<td>contract_parties</td>
+			<td>party_id</td>
+			<td>parties</td>
+			<td>party_id</td>
+			<td>Party roles per contract.</td>
+		</tr>
+		<tr>
+			<td>contract_locations</td>
+			<td>contract_id</td>
+			<td>contracts</td>
+			<td>contract_id</td>
+			<td>Contract-location mapping.</td>
+		</tr>
+		<tr>
+			<td>contract_locations</td>
+			<td>location_id</td>
+			<td>locations</td>
+			<td>location_id</td>
+			<td>Locations covered by contract.</td>
+		</tr>
+		<tr>
+			<td>invoice_approval_requests</td>
+			<td>invoice_id</td>
+			<td>invoices</td>
+			<td>invoice_id</td>
+			<td>Approval request for an invoice.</td>
+		</tr>
+		<tr>
+			<td>invoice_approval_requests</td>
+			<td>validation_id</td>
+			<td>invoice_validations</td>
+			<td>validation_id</td>
+			<td>Ties approval to validation snapshot.</td>
+		</tr>
+		<tr>
+			<td>invoice_approval_requests</td>
+			<td>current_level</td>
+			<td>approval_levels</td>
+			<td>level_id</td>
+			<td>Current approval level.</td>
+		</tr>
+		<tr>
+			<td>invoice_approval_history</td>
+			<td>approval_id</td>
+			<td>invoice_approval_requests</td>
+			<td>approval_id</td>
+			<td>History of status changes.</td>
+		</tr>
+		<tr>
+			<td>service_categories</td>
+			<td>parent_id</td>
+			<td>service_categories</td>
+			<td>category_id</td>
+			<td>Category hierarchy.</td>
+		</tr>
+		<tr>
+			<td>co_dev_partnerships</td>
+			<td>partner_id</td>
+			<td>parties</td>
+			<td>party_id</td>
+			<td>Co-dev partner party.</td>
+		</tr>
+		<tr>
+			<td>audit_log</td>
+			<td>record_id</td>
+			<td>(any table)</td>
+			<td>PK of that table</td>
+			<td>Generic reference via table_name + record_id.</td>
+		</tr>
+	</table>
+	### 2. Citation / Provenance Flow (Special Table)
+	This table explains how to get from a payment decision back to the original PDF text and config.
+	<table header-row="true">
+		<tr>
+			<td>**Step**</td>
+			<td>**From Table(s)**</td>
+			<td>**Key Fields / Links**</td>
+			<td>**To Table(s)**</td>
+			<td>**How to Join / Traceback**</td>
+			<td>**Purpose in Citation Flow**</td>
+		</tr>
+		<tr>
+			<td>1</td>
+			<td>document_metadata</td>
+			<td>document_id, document_type, document_url, file_hash</td>
+			<td>n/a</td>
+			<td>Use document_id as root ID; URL/hash tie back to original file storage.</td>
+			<td>Anchor: what file are we citing?</td>
+		</tr>
+		<tr>
+			<td>2</td>
+			<td>document_metadata</td>
+			<td>document_id</td>
+			<td>document_extraction_data</td>
+			<td>document_extraction_data.document_id = document_metadata.document_id</td>
+			<td>All extracted fields/snippets from a given document.</td>
+		</tr>
+		<tr>
+			<td>3</td>
+			<td>document_extraction_data</td>
+			<td>extraction_id, field_name, source_page_number, bounding_box_coordinates, text_snippet</td>
+			<td>n/a</td>
+			<td>extraction_id uniquely identifies a specific piece of extracted evidence (value + page + coordinates).</td>
+			<td>Core citation unit: “this value came from here on the PDF, with these confidences & notes.”</td>
+		</tr>
+		<tr>
+			<td>4</td>
+			<td>document_extraction_data</td>
+			<td>invoice_id, contract_id</td>
+			<td>invoices, contracts</td>
+			<td>document_extraction_data.invoice_id = invoices.invoice_id; document_extraction_data.contract_id = contracts.contract_id</td>
+			<td>Bind extracted values back to structured header entities.</td>
+		</tr>
+		<tr>
+			<td>5</td>
+			<td>document_extraction_data</td>
+			<td>extraction_id</td>
+			<td>invoice_line_items</td>
+			<td>invoice_line_items.extraction_id = document_extraction_data.extraction_id</td>
+			<td>Connect a normalized line item to the exact PDF snippet that produced it.</td>
+		</tr>
+		<tr>
+			<td>6</td>
+			<td>contracts, billable_items, service_categories</td>
+			<td>contract_id, item_id, service_category_id</td>
+			<td>invoice_line_items, line_item_matches</td>
+			<td>line_item_matches.line_item_id = invoice_line_items.line_item_id and line_item_matches.billable_item_id = billable_items.item_id</td>
+			<td>Explain how each invoice line is tied to contract terms & categories.</td>
+		</tr>
+		<tr>
+			<td>7</td>
+			<td>invoices, invoice_line_items, billable_items, line_item_matches</td>
+			<td>Amounts, UOMs, quantities, within_tolerance</td>
+			<td>invoice_validations</td>
+			<td>invoice_validations.invoice_id = invoices.invoice_id</td>
+			<td>Aggregate outcomes from line-level into invoice-level validation snapshot.</td>
+		</tr>
+		<tr>
+			<td>8</td>
+			<td>invoice_validations</td>
+			<td>validation_id, overall_status, variance_amount</td>
+			<td>validation_exceptions</td>
+			<td>validation_exceptions.validation_id = invoice_validations.validation_id</td>
+			<td>Detail-level exceptions supporting the validation result.</td>
+		</tr>
+		<tr>
+			<td>9</td>
+			<td>validation_exceptions</td>
+			<td>contract_extraction_id, invoice_extraction_id</td>
+			<td>document_extraction_data</td>
+			<td>validation_exceptions.contract_extraction_id = document_extraction_data.extraction_id</td>
+			<td>Tie each exception back to specific contract/invoice page snippets (two-sided citation).</td>
+		</tr>
+		<tr>
+			<td>10</td>
+			<td>invoice_validations, validation_exceptions</td>
+			<td>validation_id</td>
+			<td>invoice_approval_requests, invoice_approval_history</td>
+			<td>invoice_approval_requests.validation_id = invoice_validations.validation_id</td>
+			<td>Connect policy/config-based validation to human/business approval decisions.</td>
+		</tr>
+		<tr>
+			<td>11</td>
+			<td>Any table</td>
+			<td>PK of target record</td>
+			<td>audit_log</td>
+			<td>audit_log.table_name = table AND audit_log.record_id = PK</td>
+			<td>Track who changed what, when, and why; full change history for citations.</td>
+		</tr>
+	</table>

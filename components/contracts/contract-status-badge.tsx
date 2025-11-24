@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge"
 
-type ContractStatus = "Active" | "Pending" | "Expired" | "Draft"
+type ContractStatus = "Active" | "Pending" | "Expired" | "Draft" | "Terminated"
 
 interface ContractStatusBadgeProps {
   status: ContractStatus
@@ -12,6 +12,7 @@ export function ContractStatusBadge({ status }: ContractStatusBadgeProps) {
     Pending: { variant: "secondary" },
     Expired: { variant: "destructive" },
     Draft: { variant: "secondary" },
+    Terminated: { variant: "destructive", className: "bg-gray-500 hover:bg-gray-600" },
   }
 
   const config = variants[status]

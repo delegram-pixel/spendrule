@@ -5,8 +5,5 @@ export const contractTypes = [
   "Statement of Work",
   "Purchase Order",
   "License Agreement",
-  "Service Agreement",
-  "Supply Agreement",
-  "Business Associate Agreement",
   "Other",
 ];
