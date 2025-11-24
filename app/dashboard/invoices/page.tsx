@@ -5,61 +5,47 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Search, Filter, CheckCircle2, AlertTriangle, Clock } from "lucide-react"
+import { Search, Filter, FileText, DollarSign, Clock } from "lucide-react"
 import { fetchRecords } from "@/lib/teable"
+import { Invoice } from "@/lib/invoice-types"
 import { INVOICES_TABLE_ID } from "@/lib/teable-constants"
+import { InvoiceStatusBadge } from "@/components/invoices/invoice-status-badge"
+import { InvoiceDetailsDialog } from "@/components/invoices/invoice-details-dialog"
 
-// Dynamically import components that use browser-specific APIs or cause SSR issues
 const UploadInvoiceDialog = dynamic(
   () => import('@/components/invoices/upload-invoice-dialog').then(mod => mod.UploadInvoiceDialog),
   { ssr: false }
 )
-const ProofModal = dynamic(
-  () => import('@/components/invoices/proof-modal').then(mod => mod.ProofModal),
-  { ssr: false }
-)
-
-// Define a type for the invoice records
-type Invoice = {
-  id: string;
-  fields: {
-    'Invoice ID': string;
-    'Vendor Name': string;
-    'Invoice Date': string;
-    'Status': 'Validated' | 'Flagged' | 'Pending';
-    'Total Amount': number;
-    [key: string]: any;
-  };
-};
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
-  const [proofOpen, setProofOpen] = useState(false)
-
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
 
   const fetchInvoices = async () => {
     setLoading(true);
     try {
-      const records = await fetchRecords(INVOICES_TABLE_ID);
-      // Ensure the records are properly typed
-      const typedRecords = records.map(record => ({
-        id: record.id,
-        fields: {
-          'Invoice ID': record.fields['Invoice ID'] as string,
-          'Vendor Name': record.fields['Vendor Name'] as string,
-          'Invoice Date': record.fields['Invoice Date'] as string,
-          'Status': (record.fields['Status'] as 'Validated' | 'Flagged' | 'Pending') || 'Pending',
-          'Total Amount': record.fields['Total Amount'] as number,
-        }
-      }));
-      setInvoices(typedRecords as Invoice[]);
+      const invoiceRecords = await fetchRecords(INVOICES_TABLE_ID) as any[];
+
+      const typedInvoices: Invoice[] = invoiceRecords.map(record => {
+        const vendorName = record.fields.vendor_party_id?.title || 'N/A';
+        const customerName = record.fields.customer_party_id?.title || 'N/A';
+        
+        return {
+          id: record.id,
+          fields: {
+            ...record.fields,
+            'Vendor Name': vendorName,
+            'Customer Name': customerName,
+          }
+        } as Invoice;
+      });
+
+      setInvoices(typedInvoices);
     } catch (error) {
       console.error("Failed to fetch invoices:", error);
-      // Handle error state in UI if needed
     } finally {
       setLoading(false);
     }
@@ -69,56 +55,88 @@ export default function InvoicesPage() {
     fetchInvoices();
   }, []);
 
-  const handleViewProof = (invoice: Invoice) => {
-    setSelectedInvoice(invoice)
-    setProofOpen(true)
-  }
+  const handleViewDetails = (invoice: Invoice) => {
+    setSelectedInvoice(invoice);
+    setIsDetailsDialogOpen(true);
+  };
 
   const handleInvoiceUploaded = () => {
-    // Refetch the invoices to show the newly uploaded one
     fetchInvoices();
-  }
+  };
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between z-10">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Invoice Validation</h2>
-          <p className="text-muted-foreground">Review and approve invoices validated against your contracts.</p>
+          <h2 className="text-3xl font-bold tracking-tight">
+            Invoice Management
+          </h2>
+          <p className="text-muted-foreground">
+            Track and manage all your incoming and outgoing invoices.
+          </p>
         </div>
         <UploadInvoiceDialog onInvoiceUploaded={handleInvoiceUploaded} />
       </div>
 
-      {/* Stats Cards - These can be updated later to reflect real data */}
+      {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Validated (This Month)</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <CardTitle className="text-sm font-medium">
+              Total Invoices
+            </CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">1,245</div>
-            <p className="text-xs text-muted-foreground">$2.4M processed</p>
+            <div className="text-2xl font-bold">{invoices.length}</div>
+            <p className="text-xs text-muted-foreground">
+              {invoices.length > 0 ? "Overview of all invoices" : "No invoices yet"}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Flagged for Review</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-destructive" />
+            <CardTitle className="text-sm font-medium">
+              Paid Invoices
+            </CardTitle>
+            <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">23</div>
-            <p className="text-xs text-muted-foreground">$45k in potential savings</p>
+            <div className="text-2xl font-bold text-green-600">
+              {invoices.filter(i => i.fields['Current Status'] === 'Paid').length}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {invoices.length > 0
+                ? `${Math.round(
+                    (invoices.filter(i => i.fields['Current Status'] === 'Paid').length /
+                      invoices.length) *
+                      100,
+                  )}% of total`
+                : "No paid invoices"}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Processing</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Due Soon</CardTitle>
+            <Clock className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">15</div>
-            <p className="text-xs text-muted-foreground">Est. completion: 2 mins</p>
+            <div className="text-2xl font-bold text-destructive">
+              {
+                invoices.filter((i) => {
+                  const now = new Date();
+                  const dueDate = i.fields['Payment Date'] ? new Date(i.fields['Payment Date']) : null;
+                  if (!dueDate) return false;
+                  const diff = dueDate.getTime() - now.getTime();
+                  const days = diff / (1000 * 3600 * 24);
+                  return days > 0 && days <= 30; // Due within next 30 days
+                }).length
+              }
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Within next 30 days
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -128,13 +146,19 @@ export default function InvoicesPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Recent Invoices</CardTitle>
-              <CardDescription>Real-time validation status of all incoming invoices.</CardDescription>
+              <CardTitle>All Invoices</CardTitle>
+              <CardDescription>
+                View and manage all your invoices.
+              </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="Search invoices..." className="pl-8 w-[250px]" />
+                <Input
+                  type="search"
+                  placeholder="Search invoices..."
+                  className="pl-8 w-[250px]"
+                />
               </div>
               <Button variant="outline" size="icon">
                 <Filter className="h-4 w-4" />
@@ -148,7 +172,9 @@ export default function InvoicesPage() {
               <TableRow>
                 <TableHead>Invoice ID</TableHead>
                 <TableHead>Vendor</TableHead>
-                <TableHead>Date</TableHead>
+                <TableHead>Customer</TableHead>
+                <TableHead>Invoice Date</TableHead>
+                <TableHead>Due Date</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -157,7 +183,7 @@ export default function InvoicesPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center">
+                  <TableCell colSpan={8} className="text-center">
                     Loading...
                   </TableCell>
                 </TableRow>
@@ -165,32 +191,22 @@ export default function InvoicesPage() {
                 invoices.map((invoice) => (
                   <TableRow key={invoice.id}>
                     <TableCell className="font-medium">{invoice.fields['Invoice ID']}</TableCell>
-                    <TableCell>{invoice.fields['Vendor Name']}</TableCell>
+                    <TableCell>{invoice.fields['vendor_party_id']?.title || 'N/A'}</TableCell>
+                    <TableCell>{invoice.fields['customer_party_id']?.title || 'N/A'}</TableCell>
                     <TableCell>{new Date(invoice.fields['Invoice Date']).toLocaleDateString()}</TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          invoice.fields['Status'] === "Validated"
-                            ? "default"
-                            : invoice.fields['Status'] === "Flagged"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                        className={invoice.fields['Status'] === "Validated" ? "bg-green-600 hover:bg-green-700" : ""}
-                      >
-                        {invoice.fields['Status']}
-                      </Badge>
+                      {invoice.fields['Payment Date']
+                        ? new Date(invoice.fields['Payment Date']).toLocaleDateString()
+                        : 'N/A'}
+                    </TableCell>
+                    <TableCell>
+                      <InvoiceStatusBadge status={invoice.fields['Current Status']} />
                     </TableCell>
                     <TableCell className="text-right">
                       {new Intl.NumberFormat("en-US", {
                         style: "currency",
-                        currency: "USD",
-                      }).format(invoice.fields['Total Amount'])}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => handleViewProof(invoice)}>
-                        View Proof
-                      </Button>
+                        currency: invoice.fields['Currency'] || "USD",
+                      }).format(invoice.fields['Gross Amount'])}
                     </TableCell>
                   </TableRow>
                 ))
@@ -200,8 +216,13 @@ export default function InvoicesPage() {
         </CardContent>
       </Card>
 
-      {/* Proof Modal */}
-      <ProofModal invoice={selectedInvoice} open={proofOpen} onOpenChange={setProofOpen} />
+      {selectedInvoice && (
+        <InvoiceDetailsDialog
+          invoice={selectedInvoice}
+          open={isDetailsDialogOpen}
+          onOpenChange={setIsDetailsDialogOpen}
+        />
+      )}
     </div>
   )
 }

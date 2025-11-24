@@ -1,0 +1,11 @@
+DATABASE_URL="postgresql://neondb_owner:kBFxX27S6I5g@ep-black-water-a1h26h6g-pooler.ap-southeast-1.aws.neon.tech/spend-rule-healthcare-platform?sslmode=require"
+GEMINI_API_KEY="AIzaSyAzar5S9Jl3QitHABiFbfxnNvBcRpK7xng"
+GOOGLE_GENERATIVE_AI_API_KEY=AIzaSyAzar5S9Jl3QitHABiFbfxnNvBcRpK7xng
+
+NEXT_PUBLIC_GEMINI_API_KEY="AIzaSyByfsjNqplOkLh6g26dSPkZDHieC3eaZJA"  
+
+ TEABLE_API_TOKEN=teable_acc7UFdTUoDnktpH7JK_zfnK8lfQsPv5PoHJ88v2Ye6soDqCIlp9zQfUPw8gGdk=
+ TEABLE_BASE_ID=bseXd6YtTqbSSFVgAnp
+
+ NEXT_PUBLIC_TEABLE_BASE_ID=bseXd6YtTqbSSFVgAnp
+ NEXT_PUBLIC_TEABLE_API_TOKEN=teable_acc7UFdTUoDnktpH7JK_zfnK8lfQsPv5PoHJ88v2Ye6soDqCIlp9zQfUPw8gGdk=
