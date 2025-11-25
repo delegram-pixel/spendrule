@@ -1,8 +1,18 @@
-
 "use client"
 
 import { useState, useEffect } from "react"
 import dynamic from "next/dynamic"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 const UploadContractDialog = dynamic(() => import("@/components/contracts/upload-contract-dialog").then(m => m.UploadContractDialog), { ssr: false })
 import {
   Card,
@@ -22,8 +32,11 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ContractStatusBadge } from "@/components/contracts/contract-status-badge"
-import { Search, Filter, FileText } from "lucide-react"
-import { fetchRecords } from "@/lib/teable"
+import { Search, Filter, FileText, MoreHorizontal } from "lucide-react"
+// Import DropdownMenu components with type assertion
+import { DropdownMenu, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenuContent } from "@/components/ui/dropdown-menu"
+import { fetchRecords, deleteRecord } from "@/lib/teable"
 import {
   CONTRACTS_TABLE_ID,
   BILLABLE_ITEMS_TABLE_ID,
@@ -105,6 +118,21 @@ export default function ContractsPage() {
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false)
   const [billableItemsData, setBillableItemsData] = useState<BillableItemRecord[] | null>(null)
   const [contractPartiesData, setContractPartiesData] = useState<ContractPartyRecord[] | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [contractToDelete, setContractToDelete] = useState<Contract | null>(null)
+
+  const handleDeleteContract = async () => {
+    if (!contractToDelete) return;
+    try {
+      await deleteRecord(CONTRACTS_TABLE_ID, contractToDelete.id);
+      fetchContracts(); // Refresh the contracts list
+    } catch (error) {
+      console.error("Failed to delete contract:", error);
+    } finally {
+      setIsDeleteDialogOpen(false);
+      setContractToDelete(null);
+    }
+  };
 
   const fetchContracts = async () => {
     const fetchedContracts = await getContracts()
@@ -308,9 +336,27 @@ export default function ContractsPage() {
                   <TableCell>{new Date(contract.fields['Expiration Date']).toLocaleDateString()}</TableCell>
                   <TableCell>{contract.fields['Auto Renewal Enabled'] ? contract.fields['Renewal Period'] : "No Auto-Renewal"}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => handleViewDetails(contract)}>
-                      View Details
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-8 w-8 p-0">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleViewDetails(contract)}>
+                          View Details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setContractToDelete(contract);
+                            setIsDeleteDialogOpen(true);
+                          }}
+                          className="text-red-600"
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))}
@@ -327,6 +373,20 @@ export default function ContractsPage() {
           contractParties={contractPartiesData || []}
         />
       )}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the contract.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setContractToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteContract}>Continue</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

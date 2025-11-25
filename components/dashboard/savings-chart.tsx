@@ -3,58 +3,63 @@
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
-const data = [
-  {
-    name: "Jan",
-    total: 45000,
-    savings: 12000,
-  },
-  {
-    name: "Feb",
-    total: 52000,
-    savings: 14000,
-  },
-  {
-    name: "Mar",
-    total: 48000,
-    savings: 11000,
-  },
-  {
-    name: "Apr",
-    total: 61000,
-    savings: 18000,
-  },
-  {
-    name: "May",
-    total: 55000,
-    savings: 16000,
-  },
-  {
-    name: "Jun",
-    total: 67000,
-    savings: 21000,
-  },
-]
+interface SavingsChartProps {
+  exceptions: any[];
+}
 
-export function SavingsChart() {
+export function SavingsChart({ exceptions }: SavingsChartProps) {
+  const processDataForChart = () => {
+    if (!exceptions || exceptions.length === 0) {
+      return [];
+    }
+
+    const savingsByCategory = exceptions.reduce((acc, exception) => {
+      const category = exception.fields['Exception Type'] || 'Uncategorized';
+      const variance = exception.fields['Variance'] || 0;
+
+      if (!acc[category]) {
+        acc[category] = 0;
+      }
+      acc[category] += variance;
+
+      return acc;
+    }, {});
+
+    return Object.entries(savingsByCategory).map(([name, savings]) => ({
+      name: name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      savings: savings,
+    })).sort((a, b) => b.savings - a.savings);
+  };
+
+  const chartData = processDataForChart();
+
   return (
-    <Card className="col-span-4 border shadow-sm">
+    <Card className="col-span-12 lg:col-span-3 border shadow-sm">
       <CardHeader>
-        <CardTitle>Monthly Savings Overview</CardTitle>
-        <CardDescription>Total spend vs. recovered savings over the last 6 months.</CardDescription>
+        <CardTitle>Savings by Category</CardTitle>
+        <CardDescription>Total savings identified, broken down by exception type.</CardDescription>
       </CardHeader>
       <CardContent className="pl-2">
         <div className="h-[350px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted" />
-              <XAxis dataKey="name" className="text-muted-foreground" fontSize={12} tickLine={false} axisLine={false} />
+            <BarChart data={chartData} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} className="stroke-muted" />
+              <XAxis 
+                type="number" 
+                className="text-muted-foreground" 
+                fontSize={12} 
+                tickLine={false} 
+                axisLine={false} 
+                tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+              />
               <YAxis
+                type="category"
+                dataKey="name"
                 className="text-muted-foreground"
                 fontSize={12}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                width={120}
               />
               <Tooltip
                 cursor={{ fill: "hsl(var(--muted))" }}
@@ -66,8 +71,7 @@ export function SavingsChart() {
                 }}
                 formatter={(value: number) => `$${value.toLocaleString()}`}
               />
-              <Bar dataKey="total" fill="#93C5FD" radius={[8, 8, 0, 0]} name="Total Spend" />
-              <Bar dataKey="savings" fill="#5B7FFF" radius={[8, 8, 0, 0]} name="Savings" />
+              <Bar dataKey="savings" fill="#5B7FFF" radius={[0, 8, 8, 0]} name="Total Savings" />
             </BarChart>
           </ResponsiveContainer>
         </div>

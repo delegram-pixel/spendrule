@@ -85,7 +85,9 @@ export const createBatchRecords = async (tableId: string, records: Record<string
     
     const response = await teableClient.post(url, {
       fieldKeyType: 'name',
-      records: records.map(record => ({ fields: record })),
+      records: records.map(record => ({
+        fields: record
+      })),
     });
 
     console.log('📥 Batch response status:', response.status);

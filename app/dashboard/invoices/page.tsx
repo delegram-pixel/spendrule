@@ -6,12 +6,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Search, Filter, FileText, DollarSign, Clock } from "lucide-react"
-import { fetchRecords } from "@/lib/teable"
-import { Invoice } from "@/lib/invoice-types"
-import { INVOICES_TABLE_ID } from "@/lib/teable-constants"
+import { Search, Filter, FileText, DollarSign, Clock, MoreHorizontal } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { fetchRecords, deleteRecord } from "@/lib/teable"
+import { INVOICES_TABLE_ID, LINE_ITEMS_TABLE_ID } from "@/lib/teable-constants"
+import { Invoice, InvoiceLineItem } from "@/lib/invoice-types"
 import { InvoiceStatusBadge } from "@/components/invoices/invoice-status-badge"
 import { InvoiceDetailsDialog } from "@/components/invoices/invoice-details-dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 
 const UploadInvoiceDialog = dynamic(
   () => import('@/components/invoices/upload-invoice-dialog').then(mod => mod.UploadInvoiceDialog),
@@ -23,11 +40,47 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null)
+
+  const handleDeleteInvoice = async () => {
+    if (!invoiceToDelete) return;
+    try {
+      await deleteRecord(INVOICES_TABLE_ID, invoiceToDelete.id);
+      fetchInvoices(); // Refresh the invoices list
+    } catch (error) {
+      console.error("Failed to delete invoice:", error);
+    } finally {
+      setIsDeleteDialogOpen(false);
+      setInvoiceToDelete(null);
+    }
+  };
 
   const fetchInvoices = async () => {
     setLoading(true);
     try {
       const invoiceRecords = await fetchRecords(INVOICES_TABLE_ID) as any[];
+      const lineItemRecords = await fetchRecords(LINE_ITEMS_TABLE_ID) as any[];
+
+      const lineItemsByInvoiceId = lineItemRecords.reduce((acc, itemRecord) => {
+        const invoiceId = itemRecord.fields['Invoice ID (from Invoices)']?.[0]?.id;
+        if (invoiceId) {
+          if (!acc[invoiceId]) {
+            acc[invoiceId] = [];
+          }
+          acc[invoiceId].push({
+            id: itemRecord.id,
+            fields: {
+              Description: itemRecord.fields['Description'],
+              Quantity: itemRecord.fields['Quantity'],
+              "Unit Price": itemRecord.fields['Unit Price'],
+              Total: itemRecord.fields['Total'],
+              pageNumber: itemRecord.fields['Page Number'],
+            },
+          } as InvoiceLineItem);
+        }
+        return acc;
+      }, {});
 
       const typedInvoices: Invoice[] = invoiceRecords.map(record => {
         const vendorName = record.fields.vendor_party_id?.title || 'N/A';
@@ -39,6 +92,7 @@ export default function InvoicesPage() {
             ...record.fields,
             'Vendor Name': vendorName,
             'Customer Name': customerName,
+            LineItems: lineItemsByInvoiceId[record.id] || [], // Attach line items
           }
         } as Invoice;
       });
@@ -208,6 +262,30 @@ export default function InvoicesPage() {
                         currency: invoice.fields['Currency'] || "USD",
                       }).format(invoice.fields['Gross Amount'])}
                     </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" className="h-8 w-8 p-0">
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleViewDetails(invoice)}>
+                            View Details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setInvoiceToDelete(invoice);
+                              setIsDeleteDialogOpen(true);
+                            }}
+                            className="text-red-600"
+                          >
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -223,6 +301,20 @@ export default function InvoicesPage() {
           onOpenChange={setIsDetailsDialogOpen}
         />
       )}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the invoice.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setInvoiceToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteInvoice}>Continue</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

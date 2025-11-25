@@ -1,5 +1,5 @@
 // lib/teable-fields.ts
-import type { ValidationException, ComparisonResult, ExtractedContractData, BillableItem, ContractParty } from "./pdf-processor";
+import type { ValidationException, ComparisonResult, ExtractedContractData, BillableItem, ContractParty, ExtractedInvoiceData, InvoiceLineItem } from "./pdf-processor";
 
 /**
  * Maps a ValidationException object from the application's internal data structure
@@ -133,8 +133,8 @@ export function mapContractDataToTeableFields(contractData: ExtractedContractDat
     'Total Contract Value': contractData.totalContractValue,
     'Annual Value': contractData.annualValue,
     'Currency': contractData.currency,
-    'Effective Date': contractData.effectiveDate.toISOString().split('T')[0], // YYYY-MM-DD
-    'Expiration Date': contractData.expirationDate.toISOString().split('T')[0], // YYYY-MM-DD
+    'Effective Date': contractData.effectiveDate ? contractData.effectiveDate.toISOString().split('T')[0] : null, // YYYY-MM-DD
+    'Expiration Date': contractData.expirationDate ? contractData.expirationDate.toISOString().split('T')[0] : null, // YYYY-MM-DD
     'Auto Renewal Enabled': contractData.autoRenewalEnabled,
     'Renewal Period': contractData.renewalPeriod,
     'Notice Period Days': contractData.noticePeriodDays,
@@ -166,5 +166,52 @@ export function mapContractPartyToTeableFields(contractParty: ContractParty): Re
   return {
     'Contract Party': contractParty.name,
     'party_role': contractParty.role,
+  };
+}
+
+/**
+ * Maps an ExtractedInvoiceData object to the specific field names required by the 'invoices' Teable table.
+ * @param invoiceData - The extracted invoice data object.
+ * @param invoiceName - The user-provided invoice name.
+ * @param vendorId - The ID of the linked vendor party.
+ * @param customerId - The ID of the linked customer party.
+ * @returns An object with keys matching the Teable table's column names.
+ */
+export function mapInvoiceDataToTeableFields(
+  invoiceData: ExtractedInvoiceData,
+  invoiceName: string,
+): Record<string, unknown> {
+  return {
+    // Basic Info
+    "Invoice Number 2": invoiceData.invoiceNumber,  // or use Invoice ID
+    "Invoice Date": invoiceData.invoiceDate?.toISOString().split('T')[0],
+    // Amounts
+    "Net Service Amount": invoiceData.subtotal,
+    "Tax Amount": invoiceData.taxAmount,
+    "Gross Amount": invoiceData.totalAmount,
+    // Dates
+    "Payment Date": invoiceData.dueDate?.toISOString().split('T')[0],
+    // Status
+    "Current Status": "Draft",  // Options: Draft, Pending, Approved, Rejected, Paid
+    "Validation Status": "Pending Validation",  // Options: Valid, Invalid, Pending Validation
+    // Other
+    "Currency": invoiceData.currency || "USD",
+    // The `document_extraction_data` is a link field and needs to be handled separately
+    // by first creating a record in the document_metadata table and then linking its ID.
+  };
+}
+
+/**
+ * Maps an InvoiceLineItem object to the specific field names required by the 'invoice_line_items' Teable table.
+ * @param lineItem - The invoice line item object.
+ * @returns An object with keys matching the Teable table's column names.
+ */
+export function mapInvoiceLineItemToTeableFields(lineItem: InvoiceLineItem): Record<string, unknown> {
+  return {
+    'Description': lineItem.description,
+    'Quantity': lineItem.quantity,
+    'Unit Price': lineItem.unitPrice,
+    'Total Price': lineItem.totalPrice,
+    'Page Number': lineItem.pageNumber,
   };
 }

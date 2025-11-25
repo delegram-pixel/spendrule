@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { LayoutGrid, FileCheck2, AlertTriangle, ChartBar, Settings, ShieldCheck, LogOut, FileText } from "lucide-react"
+import { LayoutGrid, FileCheck2, AlertTriangle, ChartBar, Settings, ShieldCheck, LogOut, FileText, Upload } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 
 const sidebarItems = [
@@ -28,9 +28,19 @@ const sidebarItems = [
     icon: FileCheck2,
   },
   {
+    name: "Ingestion",
+    href: "/dashboard/ingestion",
+    icon: Upload,
+  },
+  {
     name: "Exceptions",
     href: "/dashboard/exceptions",
     icon: AlertTriangle,
+  },
+  {
+    name: "Approvals",
+    href: "/dashboard/approvals",
+    icon: ShieldCheck,
   },
   {
     name: "Analytics",

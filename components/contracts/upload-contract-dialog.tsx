@@ -23,8 +23,6 @@ import {
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Upload, FileText, X, CheckCircle2, Loader2, AlertCircle } from "lucide-react"
-import { extractContractData } from "@/lib/pdf-processor"
-import { contractTypes } from "@/lib/contract-types"
 import { createRecord, createBatchRecords } from "@/lib/teable"
 import {
   CONTRACTS_TABLE_ID,
@@ -97,61 +95,56 @@ export function UploadContractDialog({ onContractUploaded }: UploadContractDialo
       setProgress(20)
       setErrorMessage("")
 
-      const { extractedData } = await extractContractData(contractFile, (p) => setProgress(20 + p * 0.5)); // Progress from 20 to 70
-      setProgress(70)
+      // 1. Upload file to the server for extraction
+      const formData = new FormData();
+      formData.append('file', contractFile);
+      formData.append('documentType', 'contract');
 
-      // Map extracted data to Teable fields
-      const baseContractRecord = mapContractDataToTeableFields(extractedData);
+      setProgress(50);
 
-      // 3. Prepare the final contract record with metadata
-      const finalContractRecord = {
-        ...baseContractRecord,
-        'Contract Name': contractName?.trim() ? contractName : baseContractRecord['Contract Name'],
-        'Created Date': new Date().toISOString(),
-        'Updated Date': new Date().toISOString(),
-        'Validation Config': JSON.stringify(extractedData, null, 2), // Store full extracted data as a JSON string
-      };
-
-      // DEBUG: Log the data being sent
-      console.log('📤 Contract data being sent:', JSON.stringify(finalContractRecord, null, 2));
-      console.log('🔍 Checking each field type:');
-      Object.entries(finalContractRecord).forEach(([key, value]) => {
-        const type = Array.isArray(value) ? 'array' : typeof value;
-        const isObject = typeof value === 'object' && !Array.isArray(value) && value !== null;
-        console.log(`  ${key}: ${type}${isObject ? ' ⚠️ OBJECT!' : ''}`);
-        if (isObject) {
-          console.error(`❌ PROBLEM FIELD: "${key}" =`, value);
-        }
+      const response = await fetch('/api/extract', {
+        method: 'POST',
+        body: formData,
       });
 
-      // 4. Create the main contract record and get its ID
-      const createdContract = await createRecord(CONTRACTS_TABLE_ID, finalContractRecord);
-      const contractId = createdContract.id;
-
-      // 5. Create Billable Items, linking them to the new contract
-      const billableItemRecords = extractedData.billableItems.map(item => ({
-        ...mapBillableItemToTeableFields(item),
-        'contract_id': [ { id: contractId } ] // Link to the newly created contract
-      }));
-      try {
-        if (billableItemRecords.length > 0) {
-          await createBatchRecords(BILLABLE_ITEMS_TABLE_ID, billableItemRecords);
-        }
-      } catch (err) {
-        console.error('Failed to create billable items:', err);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || 'Failed to extract data from the server.');
       }
 
-      // 6. Create Contract Parties, linking them to the new contract
-      const contractPartyRecords = extractedData.contractParties.map(party => ({
-        ...mapContractPartyToTeableFields(party),
-        'contract_id': [ { id: contractId } ] // Link to the newly created contract
-      }));
-      try {
-        if (contractPartyRecords.length > 0) {
-          await createBatchRecords(CONTRACT_PARTIES_TABLE_ID, contractPartyRecords);
-        }
-      } catch (err) {
-        console.error('Failed to create contract parties:', err);
+      const result = await response.json();
+      const extractedData = result.data;
+      setProgress(70);
+
+      // 2. Map extracted data to Teable fields
+      const baseContractRecord = mapContractDataToTeableFields(extractedData);
+      const finalContractRecord = {
+        ...baseContractRecord,
+        'Contract Name': contractName.trim() ? contractName : baseContractRecord['Contract Name'],
+      };
+
+      // 3. Create the main contract record
+      const createdContract = await createRecord(CONTRACTS_TABLE_ID, finalContractRecord);
+      const contractId = createdContract.id;
+      setProgress(80);
+
+      // 4. Create Billable Items
+      if (extractedData.billableItems && extractedData.billableItems.length > 0) {
+        const billableItemRecords = extractedData.billableItems.map((item: any) => ({
+          ...mapBillableItemToTeableFields(item),
+          'contract_id': [ { id: contractId } ]
+        }));
+        await createBatchRecords(BILLABLE_ITEMS_TABLE_ID, billableItemRecords);
+      }
+      setProgress(90);
+
+      // 5. Create Contract Parties
+      if (extractedData.contractParties && extractedData.contractParties.length > 0) {
+        const contractPartyRecords = extractedData.contractParties.map((party: any) => ({
+          ...mapContractPartyToTeableFields(party),
+          'contract_id': [ { id: contractId } ]
+        }));
+        await createBatchRecords(CONTRACT_PARTIES_TABLE_ID, contractPartyRecords);
       }
 
       setProgress(100)

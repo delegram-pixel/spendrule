@@ -1,35 +1,8 @@
 // PDF Processing and AI Extraction Library
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as pdfjsLib from "pdfjs-dist";
-
-const key = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-console.log('🔑 API KEY CHECK:');
-console.log('Exists?', !!key);
-console.log('First 10 chars:', key?.substring(0, 10));
-console.log('Length:', key?.length);
-
-if (!key) {
-  // This will be caught by the UI and shown to the user.
-  throw new Error('NEXT_PUBLIC_GEMINI_API_KEY is not set in .env.local!');
-}
 
 // Set the workerSrc to the copied worker file in the public directory
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
-
-
-// Lazily resolve API key and model at call time.
-function getGeminiModel() {
-  const isBrowser = typeof window !== "undefined";
-  const apiKey = isBrowser ? (process.env.NEXT_PUBLIC_GEMINI_API_KEY as string | undefined) : (process.env.GEMINI_API_KEY as string | undefined);
-  if (!apiKey) {
-    throw new Error(
-      "Gemini API key is not configured. Set GEMINI_API_KEY on the server or NEXT_PUBLIC_GEMINI_API_KEY for client-side use."
-    );
-  }
-  const genAI = new GoogleGenerativeAI(apiKey);
-  console.log('API Key exists:', !!apiKey);
-  return genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-}
 
 // --- INTERFACES (remain the same) ---
 
@@ -79,9 +52,12 @@ export interface ExtractedContractData {
 export interface ExtractedInvoiceData {
   invoiceId: string;
   invoiceNumber: string;
-  vendorName: string;
-  invoiceDate: Date; // ✅ Changed from string
-  dueDate: Date; // ✅ Changed from string
+  invoiceDate: Date;
+  dueDate: Date;
+  subtotal?: number; // New field
+  taxAmount?: number; // New field
+  currency?: string; // New field
+  paymentTerms?: string; // New field
   lineItems: InvoiceLineItem[];
   totalAmount: number;
   confidence: number;
@@ -112,11 +88,11 @@ export interface ComparisonResult {
 }
 
 export interface ValidationException {
-  type: "price_mismatch" | "quantity_exceeded" | "unauthorized_item" | "expired_contract";
+  type: "price_mismatch" | "quantity_exceeded" | "unauthorized_item" | "expired_contract" | "info";
   severity: "critical" | "warning" | "info";
   lineItem: InvoiceLineItem;
   contractTerm?: BillableItem;
-  variance: number;
+  variance?: number;
   description: string;
   proofData: ProofData;
 }
@@ -137,8 +113,6 @@ export interface ProofData {
     };
 }
 
-// --- AI-POWERED EXTRACTION FUNCTIONS ---
-
 export interface TextItem {
     str: string;
     transform: number[];
@@ -147,203 +121,6 @@ export interface TextItem {
     pageNumber: number;
 }
   
-/**
- * Extracts text and positional items from a PDF file.
- */
-async function getTextAndItemsFromPdf(file: File): Promise<{ fullText: string; items: TextItem[] }> {
-    const data = await file.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data });
-    const pdf = await loadingTask.promise;
-  
-    let fullText = "";
-    const allItems: TextItem[] = [];
-  
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-      const page = await pdf.getPage(pageNum);
-      const content = await page.getTextContent();
-      
-      const pageItems = (content.items as any[]).map(item => ({
-        str: item.str || "",
-        transform: item.transform,
-        width: item.width,
-        height: item.height,
-        pageNumber: pageNum,
-      }));
-      allItems.push(...pageItems);
-
-      const pageText = pageItems.map(item => item.str).join(" ");
-      fullText += pageText + "\n";
-    }
-  
-    return { fullText, items: allItems };
-}
-
-/**
- * Extracts text from a PDF file using pdfjs-dist (browser-friendly).
- */
-async function getTextFromPdf(file: File): Promise<string> {
-  const { fullText } = await getTextAndItemsFromPdf(file);
-  return fullText;
-}
-
-/**
- * Extracts structured data from a contract PDF using AI.
- */
-export async function extractContractData(
-  file: File,
-  onProgress?: (progress: number) => void
-): Promise<{ extractedData: ExtractedContractData; items: TextItem[] }> {
-  onProgress?.(10);
-  const { fullText: documentText, items } = await getTextAndItemsFromPdf(file);
-  onProgress?.(40);
-
-  const prompt = `
-    You are an expert contract analysis AI. Extract key information based on the JSON schema and instructions below.
-    Return ONLY valid JSON that strictly adheres to the schema.
-
-    **Instructions & Constraints:**
-    1.  **Dates**: Return all dates in ISO format (YYYY-MM-DD).
-    2.  **Single-Select Fields**: For the fields \`contractType\`, \`contractStatus\`, and \`relationshipType\`, you MUST choose one of the exact, case-sensitive values provided in the schema below. Do not invent new values. If no value seems to fit, use "Other".
-
-    **JSON Schema:**
-    {
-      "contractName": "string",
-      "contractId": "string",
-      "contractNumber": "string",
-      "contractTitle": "string",
-      "version": "1.0",
-      "contractType": ["Master Service Agreement", "Statement of Work", "Purchase Order", "License Agreement", "Other"],
-      "contractStatus": ["Draft", "Active", "Pending", "Expired", "Terminated"],
-      "relationshipType": ["Parent", "Child", "Standalone"],
-      "totalContractValue": 50000.00,
-      "annualValue": 25000.00,
-      "currency": "USD",
-      "effectiveDate": "YYYY-MM-DD",
-      "expirationDate": "YYYY-MM-DD",
-      "autoRenewalEnabled": true,
-      "renewalPeriod": "1 year",
-      "noticePeriodDays": 90,
-      "hierarchyLevel": 1,
-      "parentContractId": null,
-      "billableItems": [{
-        "itemDescription": "Consulting Services",
-        "unitPrice": 150.00,
-        "unit": "hour",
-        "quantity": 100,
-        "conditions": "standard rate",
-        "pageNumber": 2,
-        "confidence": 0.95
-      }],
-      "contractParties": [{
-          "name": "Vendor Corp",
-          "role": "Vendor"
-      }, {
-          "name": "Client Inc.",
-          "role": "Client"
-      }],
-      "paymentTerms": "Net 30",
-      "penaltyClauses": ["Late payment fee of 1.5% per month"],
-      "complianceRequirements": ["HIPAA"],
-      "confidence": 0.90,
-      "pageReferences": { "pricing": 2, "signatures": 4 }
-    }
-
-    Contract Text:
-    ${documentText.substring(0, 15000)}
-  `;
-
-  try {
-    const result = await getGeminiModel().generateContent(prompt);
-    const response = await result.response;
-    onProgress?.(90);
-
-    let jsonString = response.text();
-    
-    // Remove markdown code blocks if present
-    jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    
-    const parsedData = JSON.parse(jsonString);
-
-    if (parsedData.error) {
-      throw new Error(`AI error: ${parsedData.error}`);
-    }
-
-    // ✅ Convert date strings to Date objects
-    if(parsedData.effectiveDate) parsedData.effectiveDate = new Date(parsedData.effectiveDate);
-    if(parsedData.expirationDate) parsedData.expirationDate = new Date(parsedData.expirationDate);
-
-    console.log("[AI] Contract extraction complete");
-    onProgress?.(100);
-    return { extractedData: parsedData as ExtractedContractData, items };
-  } catch (error) {
-    console.error("Error extracting contract data:", error);
-    throw new Error(`Failed to extract contract: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
-
-/**
- * Extracts structured data from an invoice PDF using AI.
- */
-export async function extractInvoiceData(
-  file: File,
-  onProgress?: (progress: number) => void
-): Promise<{ extractedData: ExtractedInvoiceData; items: TextItem[] }> {
-    onProgress?.(10);
-    const { fullText: documentText, items } = await getTextAndItemsFromPdf(file);
-    onProgress?.(40);
-
-    const prompt = `
-        Extract invoice information and return ONLY valid JSON. Use ISO date format.
-
-        {
-          "invoiceId": "INV-123",
-          "invoiceNumber": "INV-123",
-          "vendorName": "Vendor Name",
-          "invoiceDate": "2024-12-09",
-          "dueDate": "2024-12-31",
-          "lineItems": [{
-            "description": "Service description",
-            "quantity": 8,
-            "unitPrice": 70.00,
-            "totalPrice": 560.00,
-            "pageNumber": 1
-          }],
-          "totalAmount": 89611.67,
-          "confidence": 0.95
-        }
-
-        Invoice Text:
-        ${documentText.substring(0, 15000)}
-    `;
-
-    try {
-        const result = await getGeminiModel().generateContent(prompt);
-        const response = await result.response;
-        onProgress?.(90);
-        
-        let jsonString = response.text();
-        jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        
-        const parsedData = JSON.parse(jsonString);
-
-        if (parsedData.error) {
-          throw new Error(`AI error: ${parsedData.error}`);
-        }
-
-        // ✅ Convert date strings to Date objects
-        
-        parsedData.invoiceDate = new Date(parsedData.invoiceDate);
-        parsedData.dueDate = new Date(parsedData.dueDate);
-
-        console.log("[AI] Invoice extraction complete");
-        onProgress?.(100);
-        return { extractedData: parsedData as ExtractedInvoiceData, items };
-    } catch (error) {
-        console.error("Error extracting invoice data:", error);
-        throw new Error(`Failed to extract invoice: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-}
-
 
 // --- DETERMINISTIC COMPARISON LOGIC (remains the same) ---
 

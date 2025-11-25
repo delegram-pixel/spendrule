@@ -21,6 +21,9 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Invoice } from "@/lib/invoice-types"
 import { Label } from "@/components/ui/label"
 import { DollarSign, CalendarDays, ReceiptText, Tag, UserRound, Building } from "lucide-react"
+import { ProofModal } from "@/components/invoices/proof-modal"
+import type { ValidationException, ProofData } from "@/lib/pdf-processor"
+import { useState } from "react"
 
 interface InvoiceDetailsDialogProps {
   invoice: Invoice | null
@@ -33,6 +36,9 @@ export function InvoiceDetailsDialog({
   open,
   onOpenChange,
 }: InvoiceDetailsDialogProps) {
+  const [isProofModalOpen, setIsProofModalOpen] = useState(false)
+  const [currentExceptionForProof, setCurrentExceptionForProof] = useState<ValidationException | undefined>(undefined)
+
   if (!invoice) return null
 
   const formatCurrency = (amount: number, currency: string = "USD") => {
@@ -44,6 +50,41 @@ export function InvoiceDetailsDialog({
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString()
+  }
+
+  const handleViewProof = (lineItem: InvoiceLineItem) => {
+    const simulatedProofData: ProofData = {
+      contractPageNumber: 0, // No contract page for a simple line item click
+      contractText: "N/A",
+      contractHighlight: { x: 0, y: 0, width: 0, height: 0 },
+      invoicePageNumber: lineItem.fields.pageNumber || 1, // Use pageNumber from line item
+      invoiceText: `Description: ${lineItem.fields.Description}\nQuantity: ${lineItem.fields.Quantity}\nUnit Price: ${lineItem.fields["Unit Price"]}\nTotal: ${lineItem.fields.Total}`,
+      invoiceHighlight: { x: 0, y: 0, width: 0, height: 0 }, // Placeholder, can be improved with actual coordinates
+      varianceCalculation: {
+        contractPrice: 0,
+        invoicePrice: lineItem.fields["Unit Price"],
+        difference: 0,
+        quantity: lineItem.fields.Quantity,
+        totalOvercharge: 0,
+      },
+    }
+
+    const simulatedException: ValidationException = {
+      type: "info", // Or a more specific type if applicable
+      severity: "info",
+      lineItem: {
+        description: lineItem.fields.Description,
+        quantity: lineItem.fields.Quantity,
+        unitPrice: lineItem.fields["Unit Price"],
+        totalPrice: lineItem.fields.Total,
+        pageNumber: lineItem.fields.pageNumber || 1,
+      } as any, // Cast to any to match the InvoiceLineItem in ValidationException
+      description: `Viewing proof for invoice line item: ${lineItem.fields.Description}`,
+      proofData: simulatedProofData,
+    }
+
+    setCurrentExceptionForProof(simulatedException)
+    setIsProofModalOpen(true)
   }
 
   return (
@@ -127,7 +168,52 @@ export function InvoiceDetailsDialog({
               <span>{invoice.fields['Currency']}</span>
             </div>
           </div>
+
+          {/* Line Items */}
+          {invoice.fields.LineItems && invoice.fields.LineItems.length > 0 && (
+            <>
+              <Separator className="my-4" />
+              <div className="space-y-2">
+                <h3 className="font-semibold text-lg flex items-center gap-2">
+                  <Tag className="h-5 w-5 text-primary" /> Line Items
+                </h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Quantity</TableHead>
+                      <TableHead className="text-right">Unit Price</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {invoice.fields.LineItems.map((item, index) => (
+                      <TableRow
+                        key={index}
+                        onClick={() => handleViewProof(item)}
+                        className="cursor-pointer hover:bg-muted/50"
+                      >
+                        <TableCell className="font-medium">{item.fields.Description}</TableCell>
+                        <TableCell className="text-right">{item.fields.Quantity}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(item.fields["Unit Price"], invoice.fields['Currency'])}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(item.fields.Total, invoice.fields['Currency'])}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
         </ScrollArea>
+
+        {invoice && (
+          <ProofModal
+            invoice={invoice as any} // Cast to any because ProofModal's Invoice type is simpler
+            exception={currentExceptionForProof}
+            open={isProofModalOpen}
+            onOpenChange={setIsProofModalOpen}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )
